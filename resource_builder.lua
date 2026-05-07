@@ -245,16 +245,8 @@ local resource do
             return string.format('Script: \a%s%s [%s]', software.get_color(true), script.name, script.build)
         end
 
-        local function get_script_username_label()
-            return string.format('Username: \a%s%s', software.get_color(true), script.user)
-        end
-
         general.script_name = menu.new(
             ui.new_label, 'AA', 'Fake lag', get_script_name_label()
-        )
-
-        general.script_user = menu.new(
-            ui.new_label, 'AA', 'Fake lag', get_script_username_label()
         )
 
         general.category = new_category_item(
@@ -299,7 +291,6 @@ local resource do
 
             local function on_menu_color(item)
                 general.script_name:set(get_script_name_label())
-                general.script_user:set(get_script_username_label())
             end
 
             ui_callback.set(
@@ -2544,7 +2535,6 @@ local resource do
 
         local function force_update_scene()
             menu_logic.set(general.script_name, true)
-            menu_logic.set(general.script_user, true)
 
             local category = general.category:get()
             menu_logic.set(general.category, true)
