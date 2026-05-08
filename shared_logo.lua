@@ -107,8 +107,8 @@ function M.start(ctx)
                 var image_panel = $.CreatePanel("Panel", row, "pasthetic_shared_logo_" + xuid);
                 var layout = ''
                     + '<root>'
-                    + '    <Panel style="flow-children: left; margin-right: 5px;">'
-                    + '        <Image textureheight="24" texturewidth="24" src="' + logo_url + '" />'
+                    + '    <Panel style="flow-children: left; margin-right: 5px; vertical-align: center;">'
+                    + '        <Image textureheight="20" texturewidth="20" src="' + logo_url + '" />'
                     + '    </Panel>'
                     + '</root>';
 
