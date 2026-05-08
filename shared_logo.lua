@@ -1,23 +1,25 @@
 local M = {}
 
-local LOGO_URL_DEFAULT = 'https://raw.githubusercontent.com/Garagoro/Pasthetic/refs/heads/main/logo%202.png'
-local MESSAGE_MAGIC = 'PTH_SHARED_LOGO'
-local MESSAGE_VERSION = '1'
-local HEARTBEAT_INTERVAL = 1.25
-local SCOREBOARD_INTERVAL = 1.0
-local PLAYER_TTL = 7.0
+local LOGO_URL_CURRENT = 'https://raw.githubusercontent.com/Garagoro/Pasthetic/refs/heads/main/logo%202.png'
+local LOGO_URL_LEGACY  = 'https://raw.githubusercontent.com/Garagoro/Pasthetic/refs/heads/main/logo%203.png'
+local MESSAGE_MAGIC    = 'PTH_SHARED_LOGO'
+local MESSAGE_VERSION  = '2'
+local HEARTBEAT_INTERVAL   = 1.25
+local SCOREBOARD_INTERVAL  = 1.0
+local PLAYER_TTL           = 7.0
 
 function M.start(ctx)
     ctx = ctx or {}
 
-    local globals = ctx.globals or globals
-    local entity = ctx.entity or entity
-    local client = ctx.client or client
+    local globals  = ctx.globals  or globals
+    local entity   = ctx.entity   or entity
+    local client   = ctx.client   or client
     local panorama = ctx.panorama or panorama
 
     local voice_message = require 'voice_message'
 
-    local LOGO_URL = (function()
+    -- Creator logo (local override) or current public logo
+    local LOGO_URL_CREATOR = (function()
         local src = readfile and readfile('pasthetic\\creator_logo.lua')
         if type(src) == 'string' then
             local chunk = loadstring(src)
@@ -26,18 +28,18 @@ function M.start(ctx)
                 if ok and type(val) == 'string' then return val end
             end
         end
-        return LOGO_URL_DEFAULT
+        return LOGO_URL_CURRENT
     end)()
 
+    -- shared_players maps xuid -> logo_url
     local shared_players = {}
-    local last_seen = {}
-    local last_heartbeat = 0
+    local last_seen      = {}
+    local last_heartbeat        = 0
     local last_scoreboard_update = 0
 
     local scoreboard_images = panorama.loadstring([[
         var name_panels = {};
         var target_players = {};
-        var logo_url = "";
 
         var _GetScoreboard = function() {
             var root = $.GetContextPanel();
@@ -77,9 +79,8 @@ function M.start(ctx)
             });
         };
 
-        var _Update = function(players, imageUrl) {
+        var _Update = function(players) {
             target_players = players || {};
-            logo_url = imageUrl || logo_url;
 
             _Destroy();
 
@@ -88,7 +89,8 @@ function M.start(ctx)
 
             scoreboard.FindChildrenWithClassTraverse("sb-row").forEach(function(row) {
                 var xuid = String(row.m_xuid || "");
-                if (!target_players[xuid]) return;
+                var logo_url = target_players[xuid];
+                if (!logo_url) return;
 
                 row.Children().forEach(function(child) {
                     var nameLabel = child.FindChildTraverse("name");
@@ -142,17 +144,17 @@ function M.start(ctx)
         return xuid
     end
 
-    local function mark_shared_player(xuid)
+    local function mark_shared_player(xuid, logo_url)
         if xuid == nil or xuid == '' then
             return
         end
 
-        shared_players[xuid] = true
+        shared_players[xuid] = logo_url
         last_seen[xuid] = globals.realtime()
     end
 
     local function mark_local_player()
-        mark_shared_player(get_local_xuid())
+        mark_shared_player(get_local_xuid(), LOGO_URL_CREATOR)
     end
 
     local function cleanup_shared_players()
@@ -168,7 +170,7 @@ function M.start(ctx)
     end
 
     local function update_scoreboard()
-        scoreboard_images.update(shared_players, LOGO_URL)
+        scoreboard_images.update(shared_players)
     end
 
     local function send_heartbeat()
@@ -182,7 +184,7 @@ function M.start(ctx)
             return
         end
 
-        mark_shared_player(xuid)
+        mark_shared_player(xuid, LOGO_URL_CREATOR)
 
         voice_message.send(function(buf)
             buf:write_string(MESSAGE_MAGIC)
@@ -199,18 +201,17 @@ function M.start(ctx)
         end
 
         local version = buf:read_string()
-
-        if version ~= MESSAGE_VERSION then
-            return
-        end
-
-        local xuid = buf:read_string()
+        local xuid    = buf:read_string()
 
         if xuid == nil or xuid == '' then
             return
         end
 
-        mark_shared_player(xuid)
+        if version == MESSAGE_VERSION then
+            mark_shared_player(xuid, LOGO_URL_CURRENT)
+        elseif version == '1' then
+            mark_shared_player(xuid, LOGO_URL_LEGACY)
+        end
     end)
 
     client.set_event_callback('player_connect_full', function()
