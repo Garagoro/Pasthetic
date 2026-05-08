@@ -101,7 +101,7 @@ function M.start(deps)
     local function reset()
         last_tag = nil
         last_index = nil
-        client.set_clan_tag('')
+        client.set_clan_tag(ref.restore_tag:get() or '')
     end
 
     local function on_enabled(item)
