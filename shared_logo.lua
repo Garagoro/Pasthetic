@@ -179,7 +179,7 @@ function M.start(ctx)
     end
 
     local function update_scoreboard()
-        scoreboard_images.update(shared_players)
+        pcall(function() scoreboard_images.update(shared_players) end)
         scoreboard_dirty = false
     end
 

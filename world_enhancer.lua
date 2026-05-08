@@ -524,9 +524,13 @@ we_cb.scope_hide_update = function()
     local lp = entity_get_local_player()
     if not lp then return end
 
-    local weapon = entity_get_player_weapon(lp)
-    local is_scope_weapon = weapon and SCOPE_WEAPONS[entity_get_classname(weapon) or '']
-    local is_scoped = is_scope_weapon and entity_get_prop(lp, "DT_CSPlayer", "m_bIsScoped") == 1
+    local ok, is_scoped = pcall(function()
+        local weapon = entity_get_player_weapon(lp)
+        if not weapon then return false end
+        if not SCOPE_WEAPONS[entity_get_classname(weapon) or ''] then return false end
+        return entity_get_prop(lp, "DT_CSPlayer", "m_bIsScoped") == 1
+    end)
+    if not ok then return end
 
     local base_x  = rm.viewmodel_changer.x:get() / 10
     local target_x = is_scoped and -15 or base_x
