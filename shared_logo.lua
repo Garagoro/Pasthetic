@@ -100,24 +100,25 @@ function M.start(ctx)
                     nameLabel.style.color = "rgb(190, 205, 255)";
                     nameLabel.style.fontFamily = "Stratum2 Bold Monodigit";
                     nameLabel.style.fontWeight = "bold";
-
-                    var parent = nameLabel.GetParent();
-                    if (!parent) return;
-
-                    parent.style.flowChildren = "left";
-
-                    var image_panel = $.CreatePanel("Panel", parent, "pasthetic_shared_logo_" + xuid);
-                    var layout = ''
-                        + '<root>'
-                        + '    <Panel style="flow-children: left; margin-right: 5px;">'
-                        + '        <Image textureheight="24" texturewidth="24" src="' + logo_url + '" />'
-                        + '    </Panel>'
-                        + '</root>';
-
-                    image_panel.BLoadLayoutFromString(layout, false, false);
-                    parent.MoveChildBefore(image_panel, nameLabel);
-                    name_panels[xuid] = image_panel;
                 });
+
+                var first_child = row.GetChild(0);
+
+                var image_panel = $.CreatePanel("Panel", row, "pasthetic_shared_logo_" + xuid);
+                var layout = ''
+                    + '<root>'
+                    + '    <Panel style="flow-children: left; margin-right: 5px;">'
+                    + '        <Image textureheight="24" texturewidth="24" src="' + logo_url + '" />'
+                    + '    </Panel>'
+                    + '</root>';
+
+                image_panel.BLoadLayoutFromString(layout, false, false);
+
+                if (first_child) {
+                    row.MoveChildBefore(image_panel, first_child);
+                }
+
+                name_panels[xuid] = image_panel;
             });
         };
 
