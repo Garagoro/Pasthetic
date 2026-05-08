@@ -16,6 +16,9 @@ function M.new(deps)
     local predicted_at_targets = {}
     local ref = resource.antiaim.features.predicted_at_targets
     local records = {}
+    local PREDICT_DISTANCE_START = 650
+    local PREDICT_DISTANCE_END = 1000
+    local CURRENT_THREAT_BONUS = 0.25
 
     local function get_origin(player)
         local x, y, z = entity.get_origin(player)
@@ -168,6 +171,28 @@ function M.new(deps)
         return yaw
     end
 
+    local function get_distance2d(a, b)
+        local dx = a.x - b.x
+        local dy = a.y - b.y
+
+        return math.sqrt(dx * dx + dy * dy)
+    end
+
+    local function get_distance_weight(distance)
+        if distance >= PREDICT_DISTANCE_END then
+            return 0
+        end
+
+        if distance <= PREDICT_DISTANCE_START then
+            return 1
+        end
+
+        return clamp01(
+            (PREDICT_DISTANCE_END - distance)
+            / (PREDICT_DISTANCE_END - PREDICT_DISTANCE_START)
+        )
+    end
+
     local function extrapolate(player, origin, ticks)
         local tickinterval = globals.tickinterval()
         local velocity = get_velocity(player)
@@ -234,6 +259,7 @@ function M.new(deps)
             local previous = records[player]
             local active_until = previous and previous.active_until or 0
             local predicted_origin = previous and previous.predicted_origin or nil
+            local confidence = previous and previous.confidence or 0
             local predict_ticks = previous and previous.predict_ticks or 0
             local tick_delta = 0
 
@@ -252,6 +278,7 @@ function M.new(deps)
                 )
 
                 if context.is_signal then
+                    confidence = context.confidence
                     predict_ticks = get_predict_ticks(tick_delta, context)
                     predicted_origin = extrapolate(
                         player,
@@ -275,6 +302,7 @@ function M.new(deps)
                 simulation_tick = simulation_tick,
                 predicted_origin = predicted_origin,
                 active_until = active_until,
+                confidence = confidence,
                 predict_ticks = predict_ticks,
                 tick_delta = tick_delta
             }
@@ -307,6 +335,51 @@ function M.new(deps)
         return record
     end
 
+    local function get_camera_yaw()
+        local _, yaw = client.camera_angles()
+
+        return yaw
+    end
+
+    local function get_best_record(me_origin)
+        local current_threat = client.current_threat()
+        local best_player = nil
+        local best_record = nil
+        local best_score = 0
+
+        for player in pairs(records) do
+            local record = get_active_record(player)
+
+            if record ~= nil then
+                local origin = get_origin(player)
+
+                if origin ~= nil then
+                    local distance = get_distance2d(me_origin, origin)
+                    local distance_weight = get_distance_weight(distance)
+
+                    if distance_weight > 0 then
+                        local closeness = 1 - clamp01(distance / PREDICT_DISTANCE_END)
+                        local score = distance_weight * 1.25
+                            + closeness * 0.75
+                            + (record.confidence or 0) * 0.65
+
+                        if player == current_threat then
+                            score = score + CURRENT_THREAT_BONUS
+                        end
+
+                        if score > best_score then
+                            best_score = score
+                            best_player = player
+                            best_record = record
+                        end
+                    end
+                end
+            end
+        end
+
+        return best_player, best_record
+    end
+
     function predicted_at_targets:update(buffer)
         if not ref.enabled:get() then
             return false
@@ -322,33 +395,32 @@ function M.new(deps)
             return false
         end
 
-        local threat = client.current_threat()
-
-        if threat == nil then
-            return false
-        end
-
-        local record = get_active_record(threat)
-
-        if record == nil then
-            return false
-        end
-
         local my_origin = get_origin(me)
-        local threat_origin = get_origin(threat)
 
-        if my_origin == nil or threat_origin == nil then
+        if my_origin == nil then
             return false
         end
 
-        local current_yaw = get_yaw(my_origin, threat_origin)
+        local threat, record = get_best_record(my_origin)
+
+        if threat == nil or record == nil then
+            return false
+        end
+
+        local camera_yaw = get_camera_yaw()
+
+        if camera_yaw == nil then
+            return false
+        end
+
         local predicted_yaw = get_yaw(my_origin, record.predicted_origin)
         local correction = utils.normalize(
-            predicted_yaw - current_yaw,
+            predicted_yaw - camera_yaw,
             -180,
             180
         )
 
+        buffer.yaw_base = 'Local view'
         buffer.yaw_offset = (buffer.yaw_offset or 0) + correction
 
         return true

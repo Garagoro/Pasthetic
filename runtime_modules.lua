@@ -27,7 +27,6 @@ function M.start(ctx)
     local pasthetic_item_crash_fix = require_pasthetic_module 'pasthetic/item_crash_fix'
     local pasthetic_world_enhancer = require_pasthetic_module 'pasthetic/world_enhancer'
     local pasthetic_world_ragdolls = require_pasthetic_module 'pasthetic/world_ragdolls'
-    local pasthetic_shared_logo = require_pasthetic_module 'pasthetic/shared_logo'
 
     local script = ctx.script
     local resource = ctx.resource
@@ -336,15 +335,6 @@ function M.start(ctx)
             resource = resource,
             entity = entity,
             utils = utils
-        })
-    end)
-
-    diagnostics:start('shared_logo', function()
-        return pasthetic_shared_logo.start({
-            globals = globals,
-            entity = entity,
-            client = client,
-            panorama = panorama
         })
     end)
 
