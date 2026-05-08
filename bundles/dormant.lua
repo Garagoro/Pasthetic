@@ -28,6 +28,11 @@ local real_position_memory = {}
 local roundStarted = 0
 local dormant_esp_restore = nil
 local callbacks_registered = false
+local MAX_DORMANT_CACHE_TICKS = 128
+local MAX_DORMANT_REAL_DISTANCE_SQR = 650 * 650
+local MAX_DORMANT_REAL_Z_DELTA = 160
+local MIN_DORMANT_ALPHA = 0.18
+local MIN_DORMANT_ORIGIN_LENGTH_SQR = 64 * 64
 
 local function modify_velocity(e, goalspeed)
     local minspeed = math.sqrt((e.forwardmove * e.forwardmove) + (e.sidemove * e.sidemove))
@@ -109,11 +114,39 @@ local function get_accuracy_limit(weapon)
 end
 
 local function is_valid_origin(x, y, z)
-    return x ~= nil and y ~= nil and z ~= nil and x ~= 0
+    if x == nil or y == nil or z == nil then
+        return false
+    end
+
+    if x ~= x or y ~= y or z ~= z then
+        return false
+    end
+
+    if math.abs(x) > 32768 or math.abs(y) > 32768 or z < -4096 or z > 8192 then
+        return false
+    end
+
+    return (x * x + y * y + z * z) > MIN_DORMANT_ORIGIN_LENGTH_SQR
+end
+
+local function is_valid_dormant_box(x1, y1, x2, y2, alpha)
+    if x1 == nil or y1 == nil or x2 == nil or y2 == nil or alpha == nil then
+        return false
+    end
+
+    if alpha < MIN_DORMANT_ALPHA or alpha > 1.05 then
+        return false
+    end
+
+    return x2 > x1 and y2 > y1
 end
 
 local function remember_real_position(player, origin)
     real_position_memory[player] = origin
+end
+
+local function forget_position(player)
+    position_memory[player] = nil
 end
 
 local function is_plausible_from_real_position(player, origin)
@@ -127,7 +160,7 @@ local function is_plausible_from_real_position(player, origin)
     local dy = origin.y - cached.y
     local dz = origin.z - cached.z
 
-    return (dx * dx + dy * dy + dz * dz) <= (1000 * 1000)
+    return math.abs(dz) <= MAX_DORMANT_REAL_Z_DELTA and (dx * dx + dy * dy + dz * dz) <= MAX_DORMANT_REAL_DISTANCE_SQR
 end
 
 local function remember_position(player, origin, tickcount, alpha)
@@ -144,7 +177,7 @@ local function get_remembered_position(player, tickcount)
         return nil
     end
 
-    if tickcount - cached.tick > 512 then
+    if tickcount - cached.tick > MAX_DORMANT_CACHE_TICKS then
         return nil
     end
 
@@ -176,6 +209,7 @@ local function on_setup_command(cmd)
     if lp == nil or not entity_is_alive(lp) then
         player_info_prev = {}
         position_memory = {}
+        real_position_memory = {}
         return
     end
 
@@ -235,11 +269,12 @@ local function on_setup_command(cmd)
     for player=1, globals_maxplayers() do
         if entity_get_prop(player_resource, "m_bConnected", player) == 1 then
             if plist_get(player, "Add to whitelist") then goto skip end
-            if entity_is_enemy(player) then
+            if entity_is_enemy(player) and entity_is_alive(player) then
                 local can_hit
 
                 local origin_x, origin_y, origin_z = entity_get_origin(player)
                 local x1, y1, x2, y2, alpha_multiplier = entity_get_bounding_box(player) -- grab alpha of the dormant esp
+                local has_dormant_snapshot = origin_x ~= nil or origin_y ~= nil or origin_z ~= nil or alpha_multiplier ~= nil
                 local current_origin = is_valid_origin(origin_x, origin_y, origin_z) and vector(origin_x, origin_y, origin_z) or nil
 
                 if not entity_is_dormant(player) then
@@ -253,9 +288,16 @@ local function on_setup_command(cmd)
 
                 local origin = nil
                 local origin_alpha = alpha_multiplier
-                if current_origin ~= nil and alpha_multiplier ~= nil and alpha_multiplier > 0 and is_plausible_from_real_position(player, current_origin) then
-                    origin = current_origin
-                    remember_position(player, origin, tickcount, alpha_multiplier)
+                if has_dormant_snapshot then
+                    if current_origin ~= nil
+                        and is_valid_dormant_box(x1, y1, x2, y2, alpha_multiplier)
+                        and is_plausible_from_real_position(player, current_origin)
+                    then
+                        origin = current_origin
+                        remember_position(player, origin, tickcount, alpha_multiplier)
+                    else
+                        forget_position(player)
+                    end
                 else
                     origin, origin_alpha = get_remembered_position(player, tickcount)
                 end
@@ -268,7 +310,7 @@ local function on_setup_command(cmd)
                     end
 
                     -- update check
-                    local dormant_accurate = origin_alpha == nil or origin_alpha > 0.1
+                    local dormant_accurate = origin_alpha == nil or origin_alpha >= MIN_DORMANT_ALPHA
 
                     if dormant_accurate then
                         local target, dmg = scan_estimated_points(lp, eyepos, origin, ui_get(menu.dormant_mindmg))
@@ -277,7 +319,7 @@ local function on_setup_command(cmd)
                             stable_ticks = 6
                         end
 
-                        can_hit = target ~= nil
+                        can_hit = target ~= nil and stable_ticks > 0
                         if can_shoot and can_hit and ui_get(menu.dormant_key) then
                             local pitch, yaw = eyepos:to(target):angles()
                             local max_speed = scoped and weapon.max_player_speed_alt or weapon.max_player_speed
@@ -341,6 +383,9 @@ end
 local function resetter()
     local freezetime = (cvar.mp_freezetime:get_float()+1) / globals.tickinterval() -- get freezetime plus 1 second and disable dormantbob for that amount of ticks
     roundStarted = globals_tickcount() + freezetime
+    player_info_prev = {}
+    position_memory = {}
+    real_position_memory = {}
 end
 
 local function update_state()
