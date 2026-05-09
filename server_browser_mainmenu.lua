@@ -35,7 +35,7 @@ if not ok_steamworks then
     error('server browser: failed to load steamworks library')
 end
 
-local DEBUG = true
+local DEBUG = false
 
 local function debug_log(message)
     if DEBUG then
