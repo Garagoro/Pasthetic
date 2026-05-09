@@ -11,7 +11,7 @@ local OPTION_MODEL = 'Remove model in mainmenu'
 
 local LOGO_OUTDATED_URL = 'https://raw.githubusercontent.com/Garagoro/Pasthetic/refs/heads/main/logo%202.png'
 local LOGO_DEFAULT_URL = 'https://raw.githubusercontent.com/Garagoro/Pasthetic/refs/heads/main/logo%203.png'
-local BACKGROUND_URL = 'https://raw.githubusercontent.com/Garagoro/Pasthetic/refs/heads/main/123.jpg'
+local BACKGROUND_URL = 'https://raw.githubusercontent.com/Garagoro/Pasthetic/refs/heads/main/1.jpg'
 
 local function array_contains(array, value)
     if type(array) ~= 'table' then
@@ -293,16 +293,16 @@ function M.start(deps)
 
             var host = _FindBackgroundHost();
             var layer = $.CreatePanel("Panel", host, BACKGROUND_LAYER_ID);
-            layer.style.width = "125%";
-            layer.style.height = "110%";
-            layer.style.horizontalAlign = "left";
-            layer.style.verticalAlign = "bottom";
-            layer.style.marginLeft = "-150px";
+            layer.style.width = "100%";
+            layer.style.height = "100%";
+            layer.style.horizontalAlign = "center";
+            layer.style.verticalAlign = "center";
+            layer.style.marginLeft = "0px";
             layer.style.backgroundImage = 'url("' + imageUrl + '")';
             layer.style.backgroundPosition = "center";
             layer.style.backgroundSize = "cover";
             layer.style.backgroundRepeat = "no-repeat";
-            layer.style.transform = "scaleX(0.9)";
+            layer.style.transform = "none";
             layer.style.opacity = "1";
 
             try { layer.hittest = false; } catch (e) {}
