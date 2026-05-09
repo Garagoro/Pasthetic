@@ -454,7 +454,7 @@ local function run_query_tick(source)
     local can_render = update_panel_visibility()
 
     local ok, changed_or_err = xpcall(steam_query_tick, function(err)
-        return tostring(err) .. '\n' .. debug.traceback()
+        return tostring(err)
     end)
 
     if not ok then
@@ -610,20 +610,22 @@ server_browser = panorama.loadstring([[
         while (parent && parent.IsValid()) {
             var seenCurrent = false;
 
-            for (var i = 0; i < parent.GetChildCount(); i++) {
-                var child = parent.GetChild(i);
+            if (parent.id !== 'JsNewsContainer') {
+                for (var i = 0; i < parent.GetChildCount(); i++) {
+                    var child = parent.GetChild(i);
 
-                if (child === current) {
-                    seenCurrent = true;
-                    continue;
-                }
+                    if (child === current) {
+                        seenCurrent = true;
+                        continue;
+                    }
 
-                if (!seenCurrent || !child || child === rootPanel || child.id === PANEL_ID) {
-                    continue;
-                }
+                    if (!seenCurrent || !child || child === rootPanel || child.id === PANEL_ID) {
+                        continue;
+                    }
 
-                if (isPanelActuallyVisible(child) && rectsOverlap(getPanelRect(child), targetRect)) {
-                    return true;
+                    if (isPanelActuallyVisible(child) && rectsOverlap(getPanelRect(child), targetRect)) {
+                        return true;
+                    }
                 }
             }
 
@@ -653,9 +655,8 @@ server_browser = panorama.loadstring([[
             return false;
         }
 
-        var enabled = !isCoveredByUpperLayer(rootPanel);
-        setBrowserHitTest(rootPanel, enabled);
-        return enabled;
+        setBrowserHitTest(rootPanel, true);
+        return true;
     }
 
     function isMainMenu() {
@@ -721,6 +722,8 @@ server_browser = panorama.loadstring([[
         btn.style.padding = '0px';
         btn.style.backgroundColor = 'rgba(0,0,0,0)';
         btn.style.border = '0px solid rgba(0,0,0,0)';
+        try { btn.hittest = true; } catch (e) {}
+        try { btn.hittestchildren = true; } catch (e) {}
 
         var text = label(btn, id + 'Text', address, C.connect, '13px', 'normal');
         text.style.horizontalAlign = 'left';
@@ -742,7 +745,6 @@ server_browser = panorama.loadstring([[
             var state = clickState[id] || { last: 0, token: 0 };
 
             if (now - state.last < 320) {
-                state.token++;
                 state.last = 0;
                 clickState[id] = state;
 
@@ -753,20 +755,8 @@ server_browser = panorama.loadstring([[
             }
 
             state.last = now;
-            state.token++;
-            var token = state.token;
             clickState[id] = state;
-
-            $.Schedule(0.34, function() {
-                var current = clickState[id];
-                if (!current || current.token !== token) {
-                    return;
-                }
-
-                current.last = 0;
-                clickState[id] = current;
-                copyAddress(address, btn);
-            });
+            copyAddress(address, btn);
         });
 
         return btn;
@@ -848,12 +838,12 @@ server_browser = panorama.loadstring([[
         var news = getNewsPanel();
         var insideNews = news && host === news;
         var rootPanel = panel(host, PANEL_ID);
-        rootPanel.style.width = '649px';
-        rootPanel.style.height = '1000px';
+        rootPanel.style.width = '604px';
+        rootPanel.style.height = '870px';
         rootPanel.style.horizontalAlign = 'left';
         rootPanel.style.verticalAlign = 'top';
-        rootPanel.style.marginLeft = insideNews ? '0px' : '130px';
-        rootPanel.style.marginTop = insideNews ? '0px' : '55px';
+        rootPanel.style.marginLeft = insideNews ? '20px' : '150px';
+        rootPanel.style.marginTop = insideNews ? '20px' : '75px';
         rootPanel.style.flowChildren = 'down';
         rootPanel.style.overflow = 'clip';
         rootPanel.style.padding = '20px 22px';
