@@ -541,13 +541,49 @@ function M.start(deps)
     ]], 'CSGOMainMenu')()
 
     local remove_vac_panel = panorama.loadstring([[
-        var notification_panel = null;
-        var original_visibility = null;
-        var original_opacity = null;
-        var original_transform = null;
+        var hidden_panels = [];
+        var closed_insecure_popup = false;
+        var closed_legacy_popup = false;
+
+        var LEGACY_TEXT_MATCHES = [
+            'legacy version of cs:go',
+            'you are playing the legacy version of cs:go',
+            'старая версия cs:go',
+            'старую версию cs:go',
+            'вы играете в старую версию cs:go'
+        ];
+
+        var INSECURE_TEXT_MATCHES = [
+            '-insecure',
+            'insecure mode',
+            'insecure flag',
+            'небезопасном режиме',
+            'небезопасный режим',
+            'небезопасного режима'
+        ];
 
         var _IsValid = function(panel) {
             return panel && (!panel.IsValid || panel.IsValid());
+        };
+
+        var _SafeLowerText = function(value) {
+            if (value === null || value === undefined) {
+                return '';
+            }
+
+            return String(value).toLowerCase();
+        };
+
+        var _TextHasAny = function(text, matches) {
+            text = _SafeLowerText(text);
+
+            for (var i = 0; i < matches.length; i++) {
+                if (text.indexOf(matches[i]) !== -1) {
+                    return true;
+                }
+            }
+
+            return false;
         };
 
         var _IsVacNotification = function() {
@@ -560,23 +596,115 @@ function M.start(deps)
             }
         };
 
-        var _Hide = function() {
-            var panel = $.GetContextPanel().FindChildTraverse('NotificationsContainer');
+        var _GetFatalErrorText = function() {
+            try {
+                if (typeof MyPersonaAPI !== 'undefined'
+                    && typeof MyPersonaAPI.GetClientLogonFatalError === 'function') {
+                    return _SafeLowerText(MyPersonaAPI.GetClientLogonFatalError());
+                }
+            } catch (e) {}
+
+            return '';
+        };
+
+        var _ShouldCloseInsecurePopup = function() {
+            if (closed_insecure_popup) {
+                return false;
+            }
+
+            var fatal = _GetFatalErrorText();
+            return _TextHasAny(fatal, INSECURE_TEXT_MATCHES)
+                || fatal.indexOf('onclientinsecure') !== -1;
+        };
+
+        var _ShouldCloseLegacyPopup = function() {
+            if (closed_legacy_popup) {
+                return false;
+            }
+
+            try {
+                return typeof NewsAPI !== 'undefined'
+                    && typeof NewsAPI.IsNewClientAvailable === 'function'
+                    && NewsAPI.IsNewClientAvailable();
+            } catch (e) {
+                return false;
+            }
+        };
+
+        var _CloseTargetInfoPopups = function() {
+            if (_ShouldCloseInsecurePopup()) {
+                closed_insecure_popup = true;
+                try { UiToolkitAPI.CloseAllVisiblePopups(); } catch (e) {}
+                return true;
+            }
+
+            if (_ShouldCloseLegacyPopup()) {
+                closed_legacy_popup = true;
+                try { UiToolkitAPI.CloseAllVisiblePopups(); } catch (e) {}
+                return true;
+            }
+
+            return false;
+        };
+
+        var _PanelText = function(panel) {
             if (!_IsValid(panel)) {
+                return '';
+            }
+
+            var text = '';
+
+            try {
+                if (panel.text !== undefined && panel.text !== null) {
+                    text += ' ' + panel.text;
+                }
+            } catch (e) {}
+
+            try {
+                if (panel.GetAttributeString) {
+                    text += ' ' + panel.GetAttributeString('text', '');
+                }
+            } catch (e) {}
+
+            return text;
+        };
+
+        var _PanelTreeText = function(panel, depth) {
+            if (!_IsValid(panel) || depth > 7) {
+                return '';
+            }
+
+            var text = _PanelText(panel);
+            var count = panel.GetChildCount ? panel.GetChildCount() : 0;
+
+            for (var i = 0; i < count; i++) {
+                text += ' ' + _PanelTreeText(panel.GetChild(i), depth + 1);
+            }
+
+            return text;
+        };
+
+        var _IsTracked = function(panel) {
+            for (var i = 0; i < hidden_panels.length; i++) {
+                if (hidden_panels[i].panel === panel) {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
+        var _HidePanel = function(panel) {
+            if (!_IsValid(panel) || _IsTracked(panel)) {
                 return;
             }
 
-            if (!_IsVacNotification()) {
-                _Show();
-                return;
-            }
-
-            if (notification_panel !== panel) {
-                notification_panel = panel;
-                original_visibility = panel.style.visibility || 'visible';
-                original_opacity = panel.style.opacity || '1';
-                original_transform = panel.style.transform || 'none';
-            }
+            hidden_panels.push({
+                panel: panel,
+                visibility: panel.style.visibility || 'visible',
+                opacity: panel.style.opacity || '1',
+                transform: panel.style.transform || 'none'
+            });
 
             panel.style.visibility = 'collapse';
             panel.style.opacity = '0';
@@ -585,18 +713,50 @@ function M.start(deps)
             try { panel.hittestchildren = false; } catch (e) {}
         };
 
-        var _Show = function() {
-            if (!_IsValid(notification_panel)) {
-                notification_panel = null;
+        var _ShouldHideNotificationBar = function(panel) {
+            if (!_IsValid(panel) || panel.id !== 'NotificationsContainer') {
+                return false;
+            }
+
+            return _IsVacNotification()
+                || _TextHasAny(_PanelTreeText(panel, 0), LEGACY_TEXT_MATCHES);
+        };
+
+        var _Scan = function(panel) {
+            if (!_IsValid(panel)) {
                 return;
             }
 
-            notification_panel.style.visibility = original_visibility || 'visible';
-            notification_panel.style.opacity = original_opacity || '1';
-            notification_panel.style.transform = original_transform || 'none';
-            try { notification_panel.hittest = true; } catch (e) {}
-            try { notification_panel.hittestchildren = true; } catch (e) {}
-            notification_panel = null;
+            if (_ShouldHideNotificationBar(panel)) {
+                _HidePanel(panel);
+                return;
+            }
+
+            var count = panel.GetChildCount ? panel.GetChildCount() : 0;
+            for (var i = 0; i < count; i++) {
+                _Scan(panel.GetChild(i));
+            }
+        };
+
+        var _Hide = function() {
+            _CloseTargetInfoPopups();
+            _Scan($.GetContextPanel());
+        };
+
+        var _Show = function() {
+            for (var i = 0; i < hidden_panels.length; i++) {
+                var item = hidden_panels[i];
+
+                if (_IsValid(item.panel)) {
+                    item.panel.style.visibility = item.visibility;
+                    item.panel.style.opacity = item.opacity;
+                    item.panel.style.transform = item.transform;
+                    try { item.panel.hittest = true; } catch (e) {}
+                    try { item.panel.hittestchildren = true; } catch (e) {}
+                }
+            }
+
+            hidden_panels = [];
         };
 
         return {
@@ -640,11 +800,20 @@ function M.start(deps)
     local api = {}
 
     function api.create()
-        if is_on_server() then
+        local options = get_options()
+        local on_server = is_on_server()
+        local vac_enabled = array_contains(options, OPTION_VAC)
+
+        if on_server then
+            if vac_enabled then
+                remove_vac_panel.hide()
+            elseif state.vac then
+                remove_vac_panel.show()
+            end
+
+            state.vac = vac_enabled
             return
         end
-
-        local options = get_options()
         local logo_url = get_logo_url()
         local server_browser_enabled = array_contains(options, OPTION_SERVER_BROWSER)
         local news_mode = server_browser_enabled and 'replace' or (array_contains(options, OPTION_NEWS) and 'hide' or 'none')
@@ -656,7 +825,7 @@ function M.start(deps)
             stats = array_contains(options, OPTION_STATS),
             watch = array_contains(options, OPTION_WATCH),
             sidebar = array_contains(options, OPTION_SIDEBAR),
-            vac = array_contains(options, OPTION_VAC),
+            vac = vac_enabled,
             model = array_contains(options, OPTION_MODEL)
         }
 

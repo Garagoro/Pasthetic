@@ -2339,47 +2339,7 @@ local antiaim = { } do
         end
 
         function backtrack_disruptor:update(cmd, items)
-            if not ref.enabled:get() then
-                next_pulse_command = 0
-                return
-            end
-
-            if is_builder_defensive_enabled(items) then
-                next_pulse_command = 0
-                return
-            end
-
-            if not is_exploit_ready() then
-                next_pulse_command = 0
-                return
-            end
-
-            if cmd.force_defensive == 1 or cmd.in_attack == 1 or cmd.in_attack2 == 1 then
-                return
-            end
-
-            local exploit_data = exploit.get()
-
-            if exploit_data.defensive.left > 0 then
-                return
-            end
-
-            if not is_state_active() then
-                next_pulse_command = 0
-                return
-            end
-
-            if next_pulse_command == 0 then
-                schedule_next(cmd)
-                return
-            end
-
-            if cmd.command_number < next_pulse_command then
-                return
-            end
-
-            cmd.force_defensive = 1
-            schedule_next(cmd)
+            next_pulse_command = 0
         end
     end
 

@@ -9,14 +9,21 @@ function M.start(deps)
     local utils = assert(deps.utils, 'antiaim_backtrack_poison: utils dependency is required')
     local software = assert(deps.software, 'antiaim_backtrack_poison: software dependency is required')
     local exploit = assert(deps.exploit, 'antiaim_backtrack_poison: exploit dependency is required')
+    local resource = assert(deps.resource, 'antiaim_backtrack_poison: resource dependency is required')
     local renderer = deps.renderer or renderer
     local bit = deps.bit or bit
+
+    local ref = resource.antiaim.features.backtrack_disruptor
 
     local TELEPORT_DISTANCE_SQR = 64 * 64
     local RELEASE_CHOKE_MIN = 5
     local RELEASE_BURST_TICKS = 12
     local RELEASE_BURST_PULSES = 4
     local LIGHT_SCAN_INTERVAL = 4
+    local WALL_PROJECTION_TICKS = 8
+    local WALL_SPEED_MIN = 45
+    local WALL_TRIGGER_COOLDOWN = 18
+    local WALL_SCAN_INTERVAL = 3
 
     local last_choked = 0
     local last_defensive_active = false
@@ -30,7 +37,10 @@ function M.start(deps)
     local next_burst_pulse = 0
     local next_light_pulse = 0
     local next_light_scan = 0
+    local next_wall_trigger = 0
+    local next_wall_scan = 0
     local cached_hittable = false
+    local cached_going_behind_wall = false
     local defensive_indicator = false
 
     local function reset()
@@ -45,7 +55,10 @@ function M.start(deps)
         next_burst_pulse = 0
         next_light_pulse = 0
         next_light_scan = 0
+        next_wall_trigger = 0
+        next_wall_scan = 0
         cached_hittable = false
+        cached_going_behind_wall = false
         defensive_indicator = false
     end
 
@@ -158,14 +171,27 @@ function M.start(deps)
         return points
     end
 
-    local function trace_enemy_to_local(enemy, me)
+    local function offset_points(points, dx, dy, dz)
+        local shifted = {}
+
+        for i = 1, #points do
+            local point = points[i]
+            shifted[i] = {
+                x = point.x + dx,
+                y = point.y + dy,
+                z = point.z + (dz or 0)
+            }
+        end
+
+        return shifted
+    end
+
+    local function trace_enemy_to_points(enemy, points)
         local source = get_eye_position(enemy)
 
         if source == nil then
             return false
         end
-
-        local points = get_local_points(me)
 
         for i = 1, #points do
             local point = points[i]
@@ -184,11 +210,11 @@ function M.start(deps)
         return false
     end
 
-    local function is_local_hittable(me)
+    local function are_points_hittable(me, points)
         local threat = client.current_threat()
 
         if threat ~= nil and entity.is_alive(threat) and not entity.is_dormant(threat) then
-            if get_esp_flag(threat, 11) or trace_enemy_to_local(threat, me) then
+            if get_esp_flag(threat, 11) or trace_enemy_to_points(threat, points) then
                 return true
             end
         end
@@ -200,7 +226,7 @@ function M.start(deps)
 
             if not entity.is_dormant(enemy)
                 and entity.is_alive(enemy)
-                and trace_enemy_to_local(enemy, me)
+                and trace_enemy_to_points(enemy, points)
             then
                 return true
             end
@@ -209,6 +235,48 @@ function M.start(deps)
         return false
     end
 
+    local function is_local_hittable(me)
+        return are_points_hittable(me, get_local_points(me))
+    end
+
+    local function is_going_behind_wall(me)
+        local tick = globals.tickcount()
+
+        if tick < next_wall_scan then
+            return cached_going_behind_wall
+        end
+
+        next_wall_scan = tick + WALL_SCAN_INTERVAL
+        cached_going_behind_wall = false
+
+        local origin = get_origin(me)
+        if origin == nil then
+            return false
+        end
+
+        local vx, vy, vz = get_velocity(me)
+        local speed = math.sqrt(vx * vx + vy * vy)
+
+        if speed < WALL_SPEED_MIN then
+            return false
+        end
+
+        local current_points = get_local_points(me)
+        if not are_points_hittable(me, current_points) then
+            return false
+        end
+
+        local project_time = globals.tickinterval() * WALL_PROJECTION_TICKS
+        local future_points = offset_points(
+            current_points,
+            vx * project_time,
+            vy * project_time,
+            vz * project_time
+        )
+
+        cached_going_behind_wall = not are_points_hittable(me, future_points)
+        return cached_going_behind_wall
+    end
     local function update_hittable_cache(me)
         local tick = globals.tickcount()
 
@@ -257,6 +325,10 @@ function M.start(deps)
 
     local function can_pulse(cmd, me)
         if cmd == nil or cmd.command_number == nil then
+            return false
+        end
+
+        if not ref.enabled:get() then
             return false
         end
 
@@ -402,8 +474,18 @@ function M.start(deps)
             return
         end
 
+        if not ref.enabled:get() then
+            reset()
+            return
+        end
+
         defensive_indicator = is_defensive_active()
         update_release_triggers(cmd, me)
+
+        if is_going_behind_wall(me) and cmd.command_number >= next_wall_trigger then
+            next_wall_trigger = cmd.command_number + WALL_TRIGGER_COOLDOWN
+            start_release_burst(cmd)
+        end
 
         if apply_release_burst(cmd, me) then
             return
@@ -413,7 +495,7 @@ function M.start(deps)
     end
 
     local function on_paint_ui()
-        if renderer == nil then
+        if renderer == nil or not ref.enabled:get() then
             return
         end
 

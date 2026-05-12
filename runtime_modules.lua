@@ -346,6 +346,7 @@ function M.start(ctx)
             utils = utils,
             software = software,
             exploit = exploit,
+            resource = resource,
             renderer = renderer,
             bit = bit
         })
@@ -423,6 +424,11 @@ function M.start(ctx)
             end,
             is_background_enabled = function()
                 return array_contains(get_panorama_options(), 'Change background')
+            end,
+            is_on_server = function()
+                local mapname = globals.mapname()
+
+                return type(mapname) == 'string' and mapname ~= ''
             end
         })
     end)

@@ -16,6 +16,9 @@ end
 local is_background_enabled = deps.is_background_enabled or function()
     return false
 end
+local is_on_server = deps.is_on_server or function()
+    return false
+end
 
 local MODULE_UNLOAD_KEY = '__pasthetic_server_browser_unload'
 local previous_unload = rawget(_G, MODULE_UNLOAD_KEY)
@@ -464,7 +467,8 @@ local function update_panel_visibility()
     end
 
     local enabled = is_enabled() == true and in_main_menu
-    local background_enabled = is_background_enabled() == true
+    local on_server = is_on_server() == true
+    local background_enabled = is_background_enabled() == true and not on_server
 
     if not enabled then
         if panel_visible then

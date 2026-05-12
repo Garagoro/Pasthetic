@@ -2895,17 +2895,7 @@ local resource do
 
                 local is_backtrack_disruptor = ref.backtrack_disruptor.enabled:get() do
                     menu_logic.set(ref.backtrack_disruptor.enabled, true)
-
-                    if not is_backtrack_disruptor then
-                        goto continue
-                    end
-
-                    menu_logic.set(ref.backtrack_disruptor.mode, true)
-                    menu_logic.set(ref.backtrack_disruptor.delay_min, true)
-                    menu_logic.set(ref.backtrack_disruptor.delay_max, true)
-                    menu_logic.set(ref.backtrack_disruptor.separator, true)
-
-                    ::continue::
+                    menu_logic.set(ref.backtrack_disruptor.separator, is_backtrack_disruptor)
                 end
 
                 local is_record_disruptor = ref.record_disruptor.enabled:get() do
