@@ -3,6 +3,7 @@ local ffi = require("ffi")
 local DB_KEY = "colorskinscsgo_skin_color_config_v1"
 local CONFIG_FILE = "colorskinscsgo_config.json"
 local SKIN_SELECTION_PREFIX = "__skin_selection:"
+local SKIN_COLOR_PREFIX = "__skin_color:"
 
 local read = function(typename, address)
     if address == nil then
@@ -348,6 +349,7 @@ init()
 
 local get_skin_key
 local get_weapon_team_key
+local get_weapon_color_key
 
 local ensure_skinchanger_enabled = function()
     if not ui.get(ctx.refs.skins_enabled) then
@@ -427,20 +429,35 @@ local get_current_team = function()
     return entity.get_prop(player, "m_iTeamNum")
 end
 
+get_weapon_color_key = function(team_weapon_key)
+    if team_weapon_key == nil then return nil end
+
+    return SKIN_COLOR_PREFIX .. tostring(team_weapon_key)
+end
+
+local get_legacy_skin_keys = function(weapon_id, paintkit, team)
+    if weapon_id == nil or paintkit == nil then return nil, nil end
+
+    local legacy_key = tostring(weapon_id) .. ";" .. tostring(paintkit)
+
+    if team == nil then
+        return nil, legacy_key
+    end
+
+    return tostring(team) .. ";" .. legacy_key, legacy_key
+end
+
 get_skin_key = function()
     local weapon_id = get_current_weapon_id()
     local paintkit = ui.get(ctx.refs.skins_weapon_skin)
 
     if weapon_id == nil or paintkit == nil then return nil, paintkit end
 
-    local legacy_key = tostring(weapon_id) .. ";" .. tostring(paintkit)
     local team = get_current_team()
+    local team_weapon_key, legacy_weapon_key = get_weapon_team_key()
+    local team_legacy_key, legacy_key = get_legacy_skin_keys(weapon_id, paintkit, team)
 
-    if team == nil then
-        return legacy_key, paintkit, weapon_id, nil, legacy_key
-    end
-
-    return tostring(team) .. ";" .. legacy_key, paintkit, weapon_id, team, legacy_key
+    return get_weapon_color_key(team_weapon_key), paintkit, weapon_id, team, legacy_key, team_legacy_key, legacy_weapon_key
 end
 
 get_weapon_team_key = function()
@@ -542,19 +559,82 @@ clone_config_table = function(source)
     if type(source) ~= "table" then return {} end
 
     local result = {}
+    local selections = {}
+
     for key, value in pairs(source) do
+        key = tostring(key)
+
+        if type(value) == "number" and string.sub(key, 1, #SKIN_SELECTION_PREFIX) == SKIN_SELECTION_PREFIX then
+            local team_weapon_key = string.sub(key, #SKIN_SELECTION_PREFIX + 1)
+
+            result[key] = value
+            selections[team_weapon_key] = value
+        end
+    end
+
+    for key, value in pairs(source) do
+        key = tostring(key)
+
         if type(value) == "table" then
             local colors = normalize_color_table(value)
             if colors ~= nil then
-                result[key] = colors
+                local weapon_color_key = string.match(key, "^" .. SKIN_COLOR_PREFIX .. "(.+)$")
+                if weapon_color_key ~= nil then
+                    result[get_weapon_color_key(weapon_color_key)] = colors
+                else
+                    local pool_team, pool_paintkit = string.match(key, "^__skin_pool:(%d+);(%d+)$")
+                    if pool_team ~= nil and pool_paintkit ~= nil then
+                        for team_weapon_key, selected_paintkit in pairs(selections) do
+                            local selection_team = string.match(team_weapon_key, "^(%d+);%d+$")
+
+                            if selection_team == pool_team and tonumber(selected_paintkit) == tonumber(pool_paintkit) then
+                                local color_key = get_weapon_color_key(team_weapon_key)
+
+                                if result[color_key] == nil then
+                                    result[color_key] = colors
+                                end
+                            end
+                        end
+                    else
+                        local team, weapon_id, paintkit = string.match(key, "^(%d+);(%d+);(%d+)$")
+                        if team ~= nil and weapon_id ~= nil and paintkit ~= nil then
+                            local team_weapon_key = tostring(team) .. ";" .. tostring(weapon_id)
+
+                            if tonumber(selections[team_weapon_key]) == tonumber(paintkit) then
+                                result[get_weapon_color_key(team_weapon_key)] = colors
+                            end
+                        else
+                            local legacy_weapon_id, legacy_paintkit = string.match(key, "^(%d+);(%d+)$")
+                            if legacy_weapon_id ~= nil and legacy_paintkit ~= nil then
+                                if tonumber(selections[legacy_weapon_id]) == tonumber(legacy_paintkit) then
+                                    result[get_weapon_color_key(legacy_weapon_id)] = colors
+                                end
+
+                                for team_weapon_key, selected_paintkit in pairs(selections) do
+                                    local selection_weapon = string.match(team_weapon_key, "^%d+;(%d+)$")
+
+                                    if selection_weapon == legacy_weapon_id and tonumber(selected_paintkit) == tonumber(legacy_paintkit) then
+                                        local color_key = get_weapon_color_key(team_weapon_key)
+
+                                        if result[color_key] == nil then
+                                            result[color_key] = colors
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
             end
-        elseif type(value) == "number" and string.sub(tostring(key), 1, #SKIN_SELECTION_PREFIX) == SKIN_SELECTION_PREFIX then
-            result[key] = value
         end
     end
 
     return result
 end
+
+skin_color_config = clone_config_table(skin_color_config)
+ctx.skin_color_config = skin_color_config
+save_config(ctx.skin_color_config)
 
 notify_config_change = function()
     local snapshot = clone_config_table(ctx.skin_color_config)
@@ -586,12 +666,42 @@ local save_colors_for_current_skin = function(colors)
 end
 
 apply_config_for_current_skin = function(should_force_update)
-    local key, paintkit, weapon_id, team, legacy_key = get_skin_key()
+    local key, paintkit, weapon_id, team, legacy_key, team_legacy_key, legacy_weapon_key = get_skin_key()
     if key == nil or paintkit == nil then return false end
 
     local colors = normalize_color_table(ctx.skin_color_config[ key ])
+
+    if colors == nil and team_legacy_key ~= nil and team_legacy_key ~= key then
+        colors = normalize_color_table(ctx.skin_color_config[ team_legacy_key ])
+        if colors ~= nil then
+            ctx.skin_color_config[ key ] = colors
+            ctx.skin_color_config[ team_legacy_key ] = nil
+            save_config(ctx.skin_color_config)
+        end
+    end
+
     if colors == nil and legacy_key ~= nil and legacy_key ~= key then
         colors = normalize_color_table(ctx.skin_color_config[ legacy_key ])
+        if colors ~= nil then
+            ctx.skin_color_config[ key ] = colors
+            save_config(ctx.skin_color_config)
+        end
+    end
+
+    if colors == nil and team ~= nil then
+        colors = normalize_color_table(ctx.skin_color_config[ "__skin_pool:" .. tostring(team) .. ";" .. tostring(paintkit) ])
+        if colors ~= nil then
+            ctx.skin_color_config[ key ] = colors
+            save_config(ctx.skin_color_config)
+        end
+    end
+
+    if colors == nil and legacy_weapon_key ~= nil and legacy_weapon_key ~= key then
+        colors = normalize_color_table(ctx.skin_color_config[ get_weapon_color_key(legacy_weapon_key) ])
+        if colors ~= nil then
+            ctx.skin_color_config[ key ] = colors
+            save_config(ctx.skin_color_config)
+        end
     end
 
     if colors == nil then return false, key, paintkit end

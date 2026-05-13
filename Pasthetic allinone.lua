@@ -5657,6 +5657,7 @@ return M
 local DB_KEY = "colorskinscsgo_skin_color_config_v1"
 local CONFIG_FILE = "colorskinscsgo_config.json"
 local SKIN_SELECTION_PREFIX = "__skin_selection:"
+local SKIN_COLOR_PREFIX = "__skin_color:"
 
 local read = function(typename, address)
     if address == nil then
@@ -6002,6 +6003,7 @@ init()
 
 local get_skin_key
 local get_weapon_team_key
+local get_weapon_color_key
 
 local ensure_skinchanger_enabled = function()
     if not ui.get(ctx.refs.skins_enabled) then
@@ -6081,20 +6083,35 @@ local get_current_team = function()
     return entity.get_prop(player, "m_iTeamNum")
 end
 
+get_weapon_color_key = function(team_weapon_key)
+    if team_weapon_key == nil then return nil end
+
+    return SKIN_COLOR_PREFIX .. tostring(team_weapon_key)
+end
+
+local get_legacy_skin_keys = function(weapon_id, paintkit, team)
+    if weapon_id == nil or paintkit == nil then return nil, nil end
+
+    local legacy_key = tostring(weapon_id) .. ";" .. tostring(paintkit)
+
+    if team == nil then
+        return nil, legacy_key
+    end
+
+    return tostring(team) .. ";" .. legacy_key, legacy_key
+end
+
 get_skin_key = function()
     local weapon_id = get_current_weapon_id()
     local paintkit = ui.get(ctx.refs.skins_weapon_skin)
 
     if weapon_id == nil or paintkit == nil then return nil, paintkit end
 
-    local legacy_key = tostring(weapon_id) .. ";" .. tostring(paintkit)
     local team = get_current_team()
+    local team_weapon_key, legacy_weapon_key = get_weapon_team_key()
+    local team_legacy_key, legacy_key = get_legacy_skin_keys(weapon_id, paintkit, team)
 
-    if team == nil then
-        return legacy_key, paintkit, weapon_id, nil, legacy_key
-    end
-
-    return tostring(team) .. ";" .. legacy_key, paintkit, weapon_id, team, legacy_key
+    return get_weapon_color_key(team_weapon_key), paintkit, weapon_id, team, legacy_key, team_legacy_key, legacy_weapon_key
 end
 
 get_weapon_team_key = function()
@@ -6196,19 +6213,82 @@ clone_config_table = function(source)
     if type(source) ~= "table" then return {} end
 
     local result = {}
+    local selections = {}
+
     for key, value in pairs(source) do
+        key = tostring(key)
+
+        if type(value) == "number" and string.sub(key, 1, #SKIN_SELECTION_PREFIX) == SKIN_SELECTION_PREFIX then
+            local team_weapon_key = string.sub(key, #SKIN_SELECTION_PREFIX + 1)
+
+            result[key] = value
+            selections[team_weapon_key] = value
+        end
+    end
+
+    for key, value in pairs(source) do
+        key = tostring(key)
+
         if type(value) == "table" then
             local colors = normalize_color_table(value)
             if colors ~= nil then
-                result[key] = colors
+                local weapon_color_key = string.match(key, "^" .. SKIN_COLOR_PREFIX .. "(.+)$")
+                if weapon_color_key ~= nil then
+                    result[get_weapon_color_key(weapon_color_key)] = colors
+                else
+                    local pool_team, pool_paintkit = string.match(key, "^__skin_pool:(%d+);(%d+)$")
+                    if pool_team ~= nil and pool_paintkit ~= nil then
+                        for team_weapon_key, selected_paintkit in pairs(selections) do
+                            local selection_team = string.match(team_weapon_key, "^(%d+);%d+$")
+
+                            if selection_team == pool_team and tonumber(selected_paintkit) == tonumber(pool_paintkit) then
+                                local color_key = get_weapon_color_key(team_weapon_key)
+
+                                if result[color_key] == nil then
+                                    result[color_key] = colors
+                                end
+                            end
+                        end
+                    else
+                        local team, weapon_id, paintkit = string.match(key, "^(%d+);(%d+);(%d+)$")
+                        if team ~= nil and weapon_id ~= nil and paintkit ~= nil then
+                            local team_weapon_key = tostring(team) .. ";" .. tostring(weapon_id)
+
+                            if tonumber(selections[team_weapon_key]) == tonumber(paintkit) then
+                                result[get_weapon_color_key(team_weapon_key)] = colors
+                            end
+                        else
+                            local legacy_weapon_id, legacy_paintkit = string.match(key, "^(%d+);(%d+)$")
+                            if legacy_weapon_id ~= nil and legacy_paintkit ~= nil then
+                                if tonumber(selections[legacy_weapon_id]) == tonumber(legacy_paintkit) then
+                                    result[get_weapon_color_key(legacy_weapon_id)] = colors
+                                end
+
+                                for team_weapon_key, selected_paintkit in pairs(selections) do
+                                    local selection_weapon = string.match(team_weapon_key, "^%d+;(%d+)$")
+
+                                    if selection_weapon == legacy_weapon_id and tonumber(selected_paintkit) == tonumber(legacy_paintkit) then
+                                        local color_key = get_weapon_color_key(team_weapon_key)
+
+                                        if result[color_key] == nil then
+                                            result[color_key] = colors
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
             end
-        elseif type(value) == "number" and string.sub(tostring(key), 1, #SKIN_SELECTION_PREFIX) == SKIN_SELECTION_PREFIX then
-            result[key] = value
         end
     end
 
     return result
 end
+
+skin_color_config = clone_config_table(skin_color_config)
+ctx.skin_color_config = skin_color_config
+save_config(ctx.skin_color_config)
 
 notify_config_change = function()
     local snapshot = clone_config_table(ctx.skin_color_config)
@@ -6240,12 +6320,42 @@ local save_colors_for_current_skin = function(colors)
 end
 
 apply_config_for_current_skin = function(should_force_update)
-    local key, paintkit, weapon_id, team, legacy_key = get_skin_key()
+    local key, paintkit, weapon_id, team, legacy_key, team_legacy_key, legacy_weapon_key = get_skin_key()
     if key == nil or paintkit == nil then return false end
 
     local colors = normalize_color_table(ctx.skin_color_config[ key ])
+
+    if colors == nil and team_legacy_key ~= nil and team_legacy_key ~= key then
+        colors = normalize_color_table(ctx.skin_color_config[ team_legacy_key ])
+        if colors ~= nil then
+            ctx.skin_color_config[ key ] = colors
+            ctx.skin_color_config[ team_legacy_key ] = nil
+            save_config(ctx.skin_color_config)
+        end
+    end
+
     if colors == nil and legacy_key ~= nil and legacy_key ~= key then
         colors = normalize_color_table(ctx.skin_color_config[ legacy_key ])
+        if colors ~= nil then
+            ctx.skin_color_config[ key ] = colors
+            save_config(ctx.skin_color_config)
+        end
+    end
+
+    if colors == nil and team ~= nil then
+        colors = normalize_color_table(ctx.skin_color_config[ "__skin_pool:" .. tostring(team) .. ";" .. tostring(paintkit) ])
+        if colors ~= nil then
+            ctx.skin_color_config[ key ] = colors
+            save_config(ctx.skin_color_config)
+        end
+    end
+
+    if colors == nil and legacy_weapon_key ~= nil and legacy_weapon_key ~= key then
+        colors = normalize_color_table(ctx.skin_color_config[ get_weapon_color_key(legacy_weapon_key) ])
+        if colors ~= nil then
+            ctx.skin_color_config[ key ] = colors
+            save_config(ctx.skin_color_config)
+        end
     end
 
     if colors == nil then return false, key, paintkit end
@@ -12487,7 +12597,9 @@ function M.start(deps)
     local COMMIT_EXPOSURE_DAMAGE = 5
     local COMMIT_LOCK_TICKS = 6
     local COMMIT_DISTANCE = 8
-    local RETURN_CLEAR_DISTANCE = 4
+    local SAFE_RESCAN_TICKS = 4
+    local RETURN_RESUME_SPEED = 55
+    local MANUAL_RESET_DISTANCE_MIN = 160
     local AI_PEEK_TARGET_SELECTION = 'Best hit chance'
 
     local function safe_get(item, fallback)
@@ -12875,6 +12987,13 @@ function M.start(deps)
                 or (safety.exposure_count or 0) > 0)
     end
 
+    local function is_full_safe(safety)
+        return safety ~= nil
+            and (safety.incoming_damage or 0) <= 0
+            and (safety.exposure_count or 0) <= 0
+            and (safety.bad_record_exposure or 0) <= 0
+    end
+
     local function is_commit_candidate_safe(candidate, current_safety)
         if candidate == nil or candidate.start == nil then
             return false
@@ -12931,6 +13050,7 @@ function M.start(deps)
         end
 
         aipeek.data.native_return = true
+        aipeek.data.safe_rescan_ticks = 0
         clear_commit()
         restore_target_selection()
     end
@@ -13182,10 +13302,59 @@ function M.start(deps)
             start_native_return()
         end
 
-        if origin:dist(aipeek.data.positions.center) <= RETURN_CLEAR_DISTANCE then
-            aipeek.data.native_return = false
+        local center_distance = origin:dist2d(aipeek.data.positions.center)
+        local tickcount = globals.tickcount()
+
+        if not aipeek.data.native_return and aipeek.data.commit == nil then
+            local reset_distance = math.max(ref.distance:get() * 2.25, MANUAL_RESET_DISTANCE_MIN)
+
+            if center_distance > reset_distance then
+                reset()
+                return
+            end
+        end
+
+        if aipeek.data.native_return then
+            local current_safety = evaluate_position_safety(me, origin)
+            local stable_speed = get_speed2d(get_velocity(me)) <= RETURN_RESUME_SPEED
+
+            if is_full_safe(current_safety) and stable_speed then
+                aipeek.data.safe_rescan_ticks = (aipeek.data.safe_rescan_ticks or 0) + 1
+            else
+                aipeek.data.safe_rescan_ticks = 0
+            end
+
+            if (aipeek.data.safe_rescan_ticks or 0) >= SAFE_RESCAN_TICKS then
+                aipeek.data.native_return = false
+                aipeek.data.safe_rescan_ticks = 0
+                clear_commit()
+                restore_target_selection()
+            end
+
+            return
+        end
+
+        local active_commit = aipeek.data.commit
+
+        if active_commit ~= nil and active_commit.until_tick < tickcount then
+            if center_distance > COMMIT_DISTANCE then
+                start_native_return()
+                return
+            end
+
             clear_commit()
-            restore_target_selection()
+        end
+
+        if not ready_shot_local() then
+            aipeek.data.safe_rescan_ticks = 0
+
+            if center_distance > COMMIT_DISTANCE then
+                start_native_return()
+                return
+            end
+
+            clear_commit()
+            return
         end
 
         if not aipeek.data.native_return then
@@ -13198,75 +13367,73 @@ function M.start(deps)
                     damage = 0
                 }
 
-                if ready_shot_local() then
-                    local start = vector_copy(point.position) + vector(0, 0, 64)
-                    local targets = get_targets()
-                    local hitboxes = get_active_hitboxes()
-                    local min_damage = get_min_damage()
-                    local safety = nil
+                local start = vector_copy(point.position) + vector(0, 0, 64)
+                local targets = get_targets()
+                local hitboxes = get_active_hitboxes()
+                local min_damage = get_min_damage()
+                local safety = nil
 
-                    for _, target in next, targets do
-                        if is_garbage_record(target) then
-                            goto skip_target
-                        end
+                for _, target in next, targets do
+                    if is_garbage_record(target) then
+                        goto skip_target
+                    end
 
-                        local health = entity.get_prop(target, 'm_iHealth') or 0
+                    local health = entity.get_prop(target, 'm_iHealth') or 0
 
-                        for hitbox_id in next, hitboxes do
-                            local velocity = get_velocity(target)
-                            local hitbox_pos = make_vec(entity.hitbox_position(target, hitbox_id))
+                    for hitbox_id in next, hitboxes do
+                        local velocity = get_velocity(target)
+                        local hitbox_pos = make_vec(entity.hitbox_position(target, hitbox_id))
 
-                            if hitbox_pos ~= nil then
-                                local predicted = extrapolate(
-                                    hitbox_pos,
-                                    velocity,
-                                    ref.prediction:get()
-                                )
-                                local hit_ent, damage = client.trace_bullet(
-                                    me,
-                                    start.x, start.y, start.z,
-                                    predicted.x, predicted.y, predicted.z
-                                )
-                                local trace_damage = damage or 0
+                        if hitbox_pos ~= nil then
+                            local predicted = extrapolate(
+                                hitbox_pos,
+                                velocity,
+                                ref.prediction:get()
+                            )
+                            local hit_ent, damage = client.trace_bullet(
+                                me,
+                                start.x, start.y, start.z,
+                                predicted.x, predicted.y, predicted.z
+                            )
+                            local trace_damage = damage or 0
 
-                                if not hit_ent then
-                                    point[1].damage = total_damage
-                                elseif target == hit_ent then
-                                    point[1].damage = total_damage < trace_damage and trace_damage or total_damage
+                            if not hit_ent then
+                                point[1].damage = total_damage
+                            elseif target == hit_ent then
+                                point[1].damage = total_damage < trace_damage and trace_damage or total_damage
+                            end
+
+                            total_damage = point[1].damage
+
+                            if (hit_ent == nil or target == hit_ent)
+                                and (trace_damage >= min_damage or health <= trace_damage)
+                            then
+                                if safety == nil then
+                                    safety = evaluate_position_safety(me, point.position)
                                 end
 
-                                total_damage = point[1].damage
+                                local target_origin = get_origin(target)
 
-                                if (hit_ent == nil or target == hit_ent)
-                                    and (trace_damage >= min_damage or health <= trace_damage)
-                                then
-                                    if safety == nil then
-                                        safety = evaluate_position_safety(me, point.position)
-                                    end
-
-                                    local target_origin = get_origin(target)
-
-                                    if target_origin ~= nil then
-                                        aipeek.data.aim[#aipeek.data.aim + 1] = {
-                                            start = start,
-                                            ['end'] = target_origin,
-                                            damage = trace_damage,
-                                            lethal = health <= trace_damage,
-                                            move_distance = origin:dist2d(point.position),
-                                            target_distance = start:dist(target_origin),
-                                            incoming_damage = safety.incoming_damage,
-                                            exposure_count = safety.exposure_count,
-                                            bad_record_exposure = safety.bad_record_exposure
-                                        }
-                                    end
-
-                                    point[1].hitbox[hitbox_id] = predicted
+                                if target_origin ~= nil then
+                                    aipeek.data.aim[#aipeek.data.aim + 1] = {
+                                        start = start,
+                                        ['end'] = target_origin,
+                                        damage = trace_damage,
+                                        lethal = health <= trace_damage,
+                                        move_distance = origin:dist2d(point.position),
+                                        target_distance = start:dist(target_origin),
+                                        incoming_damage = safety.incoming_damage,
+                                        exposure_count = safety.exposure_count,
+                                        bad_record_exposure = safety.bad_record_exposure
+                                    }
                                 end
+
+                                point[1].hitbox[hitbox_id] = predicted
                             end
                         end
-
-                        ::skip_target::
                     end
+
+                    ::skip_target::
                 end
             end
         end
@@ -13303,7 +13470,6 @@ function M.start(deps)
         local best_aim = aipeek.data.aim[1]
 
         if not aipeek.data.native_return then
-            local center_distance = origin:dist2d(aipeek.data.positions.center)
             local current_safety = center_distance > COMMIT_DISTANCE
                 and evaluate_position_safety(me, origin)
                 or nil
@@ -13311,7 +13477,6 @@ function M.start(deps)
 
             if commit_point then
                 local commit = aipeek.data.commit
-                local tickcount = globals.tickcount()
 
                 if commit ~= nil and commit.until_tick >= tickcount then
                     move_to_pos = commit.position
