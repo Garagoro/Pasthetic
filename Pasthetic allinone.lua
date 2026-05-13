@@ -6319,6 +6319,12 @@ local save_colors_for_current_skin = function(colors)
     return true, key
 end
 
+local is_current_skin_context = function(expected_key, expected_paintkit)
+    local key, paintkit = get_skin_key()
+
+    return key == expected_key and paintkit == expected_paintkit
+end
+
 apply_config_for_current_skin = function(should_force_update)
     local key, paintkit, weapon_id, team, legacy_key, team_legacy_key, legacy_weapon_key = get_skin_key()
     if key == nil or paintkit == nil then return false end
@@ -6404,14 +6410,21 @@ local color_cb = function()
     ctx.current_paintkit = ui.get(ctx.refs.skins_weapon_skin)
     set_paintkit_colors( ctx.current_paintkit )
 
+    local paintkit = ctx.current_paintkit
     local saved, key = save_colors_for_current_skin(get_menu_colors())
     if saved and key ~= nil then
         ctx.applied_skins[ key ] = true
-        ctx.paintkit_owner[ ctx.current_paintkit ] = key
+        ctx.paintkit_owner[ paintkit ] = key
     end
 
     force_update()
-    client.delay_call(0.8, function() set_paintkit_colors(ctx.current_paintkit); apply_config_for_current_skin(true); ensure_skinchanger_enabled() end)
+    client.delay_call(0.8, function()
+        if not is_current_skin_context(key, paintkit) then return end
+
+        set_paintkit_colors(paintkit)
+        apply_config_for_current_skin(true)
+        ensure_skinchanger_enabled()
+    end)
 end
 
 local weapon_skin_cb = function()
@@ -6426,9 +6439,8 @@ local weapon_skin_cb = function()
     end
 
     if ctx.paint_kits[ ctx.current_paintkit ] ~= nil then
-        set_menu_colors( ctx.paint_kits[ ctx.current_paintkit ].color )
+        reset_paintkit_colors( ctx.current_paintkit )
         set_paintkit_colors( ctx.current_paintkit )
-        save_colors_for_current_skin(get_menu_colors())
     end
 
     force_update()
