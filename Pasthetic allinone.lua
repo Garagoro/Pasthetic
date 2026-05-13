@@ -13074,7 +13074,11 @@ function M.start(deps)
                                     if target_origin ~= nil then
                                         aipeek.data.aim[#aipeek.data.aim + 1] = {
                                             start = start,
-                                            ['end'] = target_origin
+                                            ['end'] = target_origin,
+                                            damage = trace_damage,
+                                            lethal = health <= trace_damage,
+                                            move_distance = origin:dist2d(point.position),
+                                            target_distance = start:dist(target_origin)
                                         }
                                     end
 
@@ -13090,7 +13094,19 @@ function M.start(deps)
         end
 
         table.sort(aipeek.data.aim, function(a, b)
-            return a.start:dist(a['end']) < b.start:dist(b['end'])
+            if a.lethal ~= b.lethal then
+                return a.lethal == true
+            end
+
+            if a.damage ~= b.damage then
+                return (a.damage or 0) > (b.damage or 0)
+            end
+
+            if a.move_distance ~= b.move_distance then
+                return (a.move_distance or 0) < (b.move_distance or 0)
+            end
+
+            return (a.target_distance or a.start:dist(a['end'])) < (b.target_distance or b.start:dist(b['end']))
         end)
 
         local move_to_pos = aipeek.data.positions.center

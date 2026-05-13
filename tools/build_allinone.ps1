@@ -184,17 +184,20 @@ if ($UpdateManifest) {
     }
 
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    $targets = @('Pasthetic loader.lua', 'Pasthetic allinone.lua')
 
-    foreach ($target in $targets) {
-        $targetPath = Join-Path $Root $target
-        $bytes = [System.IO.File]::ReadAllBytes($targetPath)
-        foreach ($entry in $manifest.files) {
-            if ($entry.path -eq $target) {
-                $entry.size = [int]$bytes.Length
-                $entry.checksum = Get-Adler32 $bytes
-            }
+    foreach ($entry in $manifest.files) {
+        if ($null -eq $entry.path -or $entry.path -like '*..*' -or $entry.path -match '^[a-zA-Z]:') {
+            continue
         }
+
+        $targetPath = Join-Path $Root ($entry.path -replace '/', '\')
+        if (-not (Test-Path -LiteralPath $targetPath)) {
+            continue
+        }
+
+        $bytes = [System.IO.File]::ReadAllBytes($targetPath)
+        $entry.size = [int]$bytes.Length
+        $entry.checksum = Get-Adler32 $bytes
     }
 
     $json = $manifest | ConvertTo-Json -Compress -Depth 8
