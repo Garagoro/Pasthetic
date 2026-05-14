@@ -300,6 +300,9 @@ local ctx = {
     last_weapon_ent = nil,
     last_skin_key = nil,
     last_weapon_team_key = nil,
+    team_refresh_pending = false,
+    team_refresh_team = nil,
+    team_refresh_until = 0,
     weapon_seen_at = 0,
     maybe_disabled_skins = {},
 
@@ -445,7 +448,21 @@ local get_current_team = function()
     local player = entity.get_local_player()
     if player == nil then return nil end
 
-    return entity.get_prop(player, "m_iTeamNum")
+    local team = entity.get_prop(player, "m_iTeamNum")
+    local override_team = tonumber(ctx.team_refresh_team)
+
+    if override_team ~= nil
+        and override_team > 1
+        and globals.curtime() < (tonumber(ctx.team_refresh_until) or 0)
+    then
+        if team == override_team then
+            ctx.team_refresh_until = 0
+        end
+
+        return override_team
+    end
+
+    return team
 end
 
 get_skin_key = function()
@@ -559,6 +576,10 @@ local apply_saved_skin_and_rebuild = function()
 
     if applied_skin and not applied_config then
         force_update()
+    end
+
+    if ctx.team_refresh_pending and (applied_skin or applied_config) then
+        ctx.team_refresh_pending = false
     end
 
     local held_time = get_weapon_held_time()
@@ -835,6 +856,31 @@ ui.set_callback(ctx.vars.colors[ 3 ], color_cb )
 ui.set_callback(ctx.vars.colors[ 4 ], color_cb )
 
 startup_skin_refresh()
+
+client.set_event_callback("player_team", function(event)
+    local player = entity.get_local_player()
+    if player == nil or event == nil then return end
+
+    local userid = event.userid
+    if userid == nil or client.userid_to_entindex(userid) ~= player then return end
+
+    local team = tonumber(event.team)
+    if team == nil or team < 2 then return end
+
+    ctx.last_weapon_ent = nil
+    ctx.last_skin_key = nil
+    ctx.last_weapon_team_key = nil
+    ctx.applied_skins = {}
+    ctx.paintkit_owner = {}
+    ctx.team_refresh_pending = true
+    ctx.team_refresh_team = team
+    ctx.team_refresh_until = globals.curtime() + 2
+
+    ctx.refresh_token = ctx.refresh_token + 1
+    client.delay_call(0.15, apply_saved_skin_and_rebuild)
+    client.delay_call(0.45, apply_saved_skin_and_rebuild)
+end)
+
 client.set_event_callback("paint", function()
     local player = entity.get_local_player()
     if player == nil then return end
@@ -850,14 +896,17 @@ client.set_event_callback("paint", function()
     ctx.last_weapon_ent = weapon
     ctx.last_weapon_team_key = team_weapon_key
 
-    local applied_skin = apply_saved_skin_for_current_weapon()
+    apply_saved_skin_for_current_weapon()
     key = get_skin_key()
     ctx.last_skin_key = key
     enable_current_skin_if_marked()
     apply_config_for_current_skin(false)
-    if applied_skin then
+
+    if ctx.team_refresh_pending then
+        ctx.team_refresh_pending = false
         force_update()
     end
+
     schedule_skin_refresh()
 end)
 
