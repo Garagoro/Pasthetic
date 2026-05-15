@@ -466,9 +466,9 @@ local function update_panel_visibility()
         in_main_menu = ok and result == true
     end
 
-    local enabled = is_enabled() == true and in_main_menu
     local on_server = is_on_server() == true
-    local background_enabled = is_background_enabled() == true and not on_server
+    local enabled = is_enabled() == true and in_main_menu
+    local background_enabled = is_background_enabled() == true
 
     if not enabled then
         if panel_visible then
@@ -610,12 +610,17 @@ server_browser = panorama.loadstring([[
 
     function restoreNewsContent() {
         for (var i = 0; i < hiddenNewsPanels.length; i++) {
-            var panel = hiddenNewsPanels[i];
+            var item = hiddenNewsPanels[i];
+            var panel = item && item.panel ? item.panel : item;
 
             if (isValidPanel(panel)) {
-                try { panel.visible = true; } catch (e) {}
-                try { panel.style.visibility = 'visible'; } catch (e) {}
-                try { panel.style.opacity = '1'; } catch (e) {}
+                try {
+                    if (item && item.panel && item.visible !== undefined) {
+                        panel.visible = item.visible;
+                    }
+                } catch (e) {}
+                try { panel.style.visibility = item.visibility || ''; } catch (e) {}
+                try { panel.style.opacity = item.opacity || ''; } catch (e) {}
             }
         }
 
@@ -636,7 +641,12 @@ server_browser = panorama.loadstring([[
                 continue;
             }
 
-            hiddenNewsPanels.push(child);
+            hiddenNewsPanels.push({
+                panel: child,
+                visible: child.visible,
+                visibility: child.style.visibility || '',
+                opacity: child.style.opacity || ''
+            });
             try { child.visible = false; } catch (e) {}
             try { child.style.visibility = 'collapse'; } catch (e) {}
             try { child.style.opacity = '0'; } catch (e) {}

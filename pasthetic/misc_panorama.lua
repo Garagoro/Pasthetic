@@ -13,6 +13,7 @@ local OPTION_MODEL = 'Remove model in mainmenu'
 local LOGO_OUTDATED_URL = 'https://raw.githubusercontent.com/Garagoro/Pasthetic/refs/heads/main/pasthetic/logo%202.png'
 local LOGO_DEFAULT_URL = 'https://raw.githubusercontent.com/Garagoro/Pasthetic/refs/heads/main/pasthetic/logo%203.png'
 local BACKGROUND_URL = 'https://raw.githubusercontent.com/Garagoro/Pasthetic/refs/heads/main/pasthetic/1.jpg'
+local MODULE_UNLOAD_KEY = '__pasthetic_misc_panorama_unload'
 
 local function array_contains(array, value)
     if type(array) ~= 'table' then
@@ -38,6 +39,11 @@ function M.start(deps)
         return false
     end
 
+    local previous_unload = rawget(_G, MODULE_UNLOAD_KEY)
+    if type(previous_unload) == 'function' then
+        pcall(previous_unload, 'reload')
+    end
+
     local creator_logo_url = deps.creator_logo_url
     if creator_logo_url == nil then
         local ok, creator_logo = pcall(require, 'pasthetic/creator_logo')
@@ -59,6 +65,7 @@ function M.start(deps)
     end
 
     local state = {
+        alive = true,
         cslogo = false,
         logo_url = nil,
         news_mode = 'none',
@@ -86,8 +93,8 @@ function M.start(deps)
             original_transform = cs_logo.style.transform || 'none';
             original_visibility = cs_logo.style.visibility || 'visible';
 
-            cs_logo.style.transform = 'translate3d(-9999px, -9999px, 0)';
             cs_logo.style.visibility = 'collapse';
+            try { cs_logo.style.transform = 'translate3d(-9999px, -9999px, 0)'; } catch (e) {}
 
             var parent = cs_logo.GetParent();
             if (!parent) {
@@ -144,7 +151,7 @@ function M.start(deps)
             }
 
             if (cs_logo) {
-                cs_logo.style.transform = original_transform;
+                try { cs_logo.style.transform = original_transform; } catch (e) {}
                 cs_logo.style.visibility = original_visibility;
             }
         };
@@ -177,8 +184,8 @@ function M.start(deps)
             original_transform = js_news.style.transform || 'none';
             original_visibility = js_news.style.visibility || 'visible';
 
-            js_news.style.transform = 'translate3d(-9999px, -9999px, 0)';
             js_news.style.visibility = 'collapse';
+            try { js_news.style.transform = 'translate3d(-9999px, -9999px, 0)'; } catch (e) {}
 
             var parent = js_news.GetParent();
             if (!parent) {
@@ -202,7 +209,7 @@ function M.start(deps)
                     panel = null;
                 }
 
-                js_news.style.transform = original_transform;
+                try { js_news.style.transform = original_transform; } catch (e) {}
                 js_news.style.visibility = original_visibility;
             }
         };
@@ -218,7 +225,7 @@ function M.start(deps)
             original_transform = js_news.style.transform || 'none';
             original_visibility = js_news.style.visibility || 'visible';
 
-            js_news.style.transform = original_transform;
+            try { js_news.style.transform = original_transform; } catch (e) {}
             js_news.style.visibility = 'visible';
 
             hidden_children = [];
@@ -425,8 +432,8 @@ function M.start(deps)
             original_transform = watch_btn.style.transform || 'none';
             original_visibility = watch_btn.style.visibility || 'visible';
 
-            watch_btn.style.transform = 'translate3d(-9999px, -9999px, 0)';
             watch_btn.style.visibility = 'collapse';
+            try { watch_btn.style.transform = 'translate3d(-9999px, -9999px, 0)'; } catch (e) {}
 
             var parent = watch_btn.GetParent();
             if (!parent) {
@@ -447,7 +454,7 @@ function M.start(deps)
                     panel.DeleteAsync(0.0);
                     panel = null;
                 }
-                watch_btn.style.transform = original_transform;
+                try { watch_btn.style.transform = original_transform; } catch (e) {}
                 watch_btn.style.visibility = original_visibility;
             }
         };
@@ -474,8 +481,8 @@ function M.start(deps)
             original_transform = watch_btn.style.transform || 'none';
             original_visibility = watch_btn.style.visibility || 'visible';
 
-            watch_btn.style.transform = 'translate3d(-9999px, -9999px, 0)';
             watch_btn.style.visibility = 'collapse';
+            try { watch_btn.style.transform = 'translate3d(-9999px, -9999px, 0)'; } catch (e) {}
 
             var parent = watch_btn.GetParent();
             if (!parent) {
@@ -496,7 +503,7 @@ function M.start(deps)
                     panel.DeleteAsync(0.0);
                     panel = null;
                 }
-                watch_btn.style.transform = original_transform;
+                try { watch_btn.style.transform = original_transform; } catch (e) {}
                 watch_btn.style.visibility = original_visibility;
             }
         };
@@ -741,7 +748,7 @@ function M.start(deps)
 
             panel.style.visibility = 'collapse';
             panel.style.opacity = '0';
-            panel.style.transform = 'translate3d(-9999px, -9999px, 0)';
+            try { panel.style.transform = 'translate3d(-9999px, -9999px, 0)'; } catch (e) {}
             try { panel.hittest = false; } catch (e) {}
             try { panel.hittestchildren = false; } catch (e) {}
         };
@@ -804,7 +811,7 @@ function M.start(deps)
                 if (_IsValid(item.panel)) {
                     item.panel.style.visibility = item.visibility;
                     item.panel.style.opacity = item.opacity;
-                    item.panel.style.transform = item.transform;
+                    try { item.panel.style.transform = item.transform; } catch (e) {}
                     try { item.panel.hittest = true; } catch (e) {}
                     try { item.panel.hittestchildren = true; } catch (e) {}
                 }
@@ -852,8 +859,21 @@ function M.start(deps)
     ]], 'CSGOMainMenu')()
 
     local api = {}
+    local unload
+
+    local function call_method(object, method, ...)
+        if object == nil or type(object[method]) ~= 'function' then
+            return false
+        end
+
+        return pcall(object[method], ...)
+    end
 
     function api.create()
+        if not state.alive then
+            return
+        end
+
         local options = get_options()
         local on_server = is_on_server()
         local vac_enabled = array_contains(options, OPTION_VAC)
@@ -984,16 +1004,32 @@ function M.start(deps)
         end
     end
 
-    function api.shutdown()
-        cs_logo.destroy()
-        news_container.destroy()
-        background.restore()
-        stats_button.show()
-        watch_button.show()
-        remove_sidebar.show()
-        remove_vac_panel.show()
-        remove_model.show()
+    unload = function()
+        if not state.alive then
+            return
+        end
+
+        state.alive = false
+
+        call_method(cs_logo, 'destroy')
+        call_method(news_container, 'destroy')
+        call_method(background, 'restore')
+        call_method(stats_button, 'show')
+        call_method(watch_button, 'show')
+        call_method(remove_sidebar, 'show')
+        call_method(remove_vac_panel, 'show')
+        call_method(remove_model, 'show')
+
+        if rawget(_G, MODULE_UNLOAD_KEY) == unload then
+            _G[MODULE_UNLOAD_KEY] = nil
+        end
     end
+
+    function api.shutdown()
+        unload('shutdown')
+    end
+
+    _G[MODULE_UNLOAD_KEY] = unload
 
     return api
 end
