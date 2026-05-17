@@ -2194,6 +2194,12 @@ local resource do
             world_section.ragdolls = {
                 remove = menu.new(ui.new_checkbox, "AA", "Anti-aimbot angles", new_key("Remove ragdolls", "we_rg")),
             }
+            world_section.local_player_glow = {
+                enable = menu.new(ui.new_checkbox,     "AA", "Anti-aimbot angles", new_key("Local player glow",       "we_lpg")),
+                color  = menu.new(ui.new_color_picker, "AA", "Anti-aimbot angles", new_key("Local player glow color", "we_lpg"), 255, 255, 255, 255),
+                style  = menu.new(ui.new_combobox,     "AA", "Anti-aimbot angles", new_key("Local player glow style", "we_lpg"),
+                    "Default", "Rim Glow 3D", "Edge Highlight", "Edge Highlight Pulse"),
+            }
             render_we.world = world_section
         end
 
@@ -3285,6 +3291,12 @@ local resource do
                 end
 
                 menu_logic.set(ref.ragdolls.remove, true)
+
+                menu_logic.set(ref.local_player_glow.enable, true)
+                if ref.local_player_glow.enable:get() then
+                    menu_logic.set(ref.local_player_glow.color, true)
+                    menu_logic.set(ref.local_player_glow.style, true)
+                end
 
             end
             -- Render - Panorama

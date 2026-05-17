@@ -32,6 +32,7 @@ function M.start(ctx)
     local pasthetic_item_crash_fix = require_pasthetic_module 'pasthetic/item_crash_fix'
     local pasthetic_world_enhancer = require_pasthetic_module 'pasthetic/world_enhancer'
     local pasthetic_world_ragdolls = require_pasthetic_module 'pasthetic/world_ragdolls'
+    local pasthetic_world_local_glow = require_pasthetic_module 'pasthetic/world_local_glow'
     local pasthetic_server_browser_mainmenu = require_pasthetic_module 'pasthetic/server_browser_mainmenu'
 
     local script = ctx.script
@@ -438,6 +439,16 @@ function M.start(ctx)
     diagnostics:start('world_ragdolls', function()
         return pasthetic_world_ragdolls.start({
             resource = resource,
+            entity = entity,
+            utils = utils
+        })
+    end)
+
+    diagnostics:start('world_local_glow', function()
+        return pasthetic_world_local_glow.start({
+            resource = resource,
+            ffi = ffi,
+            client = client,
             entity = entity,
             utils = utils
         })

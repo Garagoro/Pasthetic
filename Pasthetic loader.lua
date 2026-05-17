@@ -257,7 +257,60 @@ local function decode_manifest(body)
     return decoded
 end
 
+local function get_allinone_manifest_entry(manifest)
+    if type(manifest) ~= 'table' then
+        return nil
+    end
+
+    local artifacts = manifest.artifacts
+    if type(artifacts) == 'table' and type(artifacts.allinone) == 'table' then
+        return artifacts.allinone
+    end
+
+    if type(manifest.files) == 'table' then
+        for i = 1, #manifest.files do
+            local entry = manifest.files[i]
+            if type(entry) == 'table' and entry.path == 'Pasthetic allinone.lua' then
+                return entry
+            end
+        end
+    end
+
+    return nil
+end
+
+local function compare_allinone_manifest(manifest)
+    local entry = get_allinone_manifest_entry(manifest)
+
+    if type(entry) ~= 'table' then
+        return {}, false
+    end
+
+    local local_entry_path = entry_path(__pasthetic_allinone_target_path or entry.path)
+    local ok_read, body = false, nil
+
+    if local_entry_path ~= nil and readfile ~= nil then
+        ok_read, body = pcall(readfile, local_entry_path)
+    end
+
+    if local_entry_path == nil then
+        return { { entry = entry, reason = 'bad path' } }, true
+    elseif not ok_read or type(body) ~= 'string' then
+        return { { entry = entry, reason = 'missing' } }, true
+    elseif type(entry.size) == 'number' and #body ~= entry.size then
+        return { { entry = entry, reason = 'size' } }, true
+    elseif type(entry.checksum) == 'string' and adler32(body) ~= entry.checksum then
+        return { { entry = entry, reason = 'checksum' } }, true
+    end
+
+    return {}, true
+end
+
 local function compare_manifest(manifest)
+    if __pasthetic_allinone == true then
+        return compare_allinone_manifest(manifest)
+    end
+
     local pending = {}
     if type(manifest) ~= 'table' or type(manifest.files) ~= 'table' then
         return pending, false
@@ -376,9 +429,21 @@ function update_manager.check(callback)
         um_state.update_available = #pending > 0
 
         if um_state.update_available then
-            um_log(('%d file(s) need update%s'):format(#pending, format_pending_files(pending)))
+            if __pasthetic_allinone == true then
+                local artifact = get_allinone_manifest_entry(manifest)
+                local current_version = tostring(__pasthetic_allinone_version or 'unknown')
+                local remote_version = artifact ~= nil and tostring(artifact.version or 'unknown') or 'unknown'
+
+                if current_version ~= remote_version then
+                    um_log(('all-in-one update available: %s -> %s'):format(current_version, remote_version))
+                else
+                    um_log('all-in-one update available')
+                end
+            else
+                um_log(('%d file(s) need update%s'):format(#pending, format_pending_files(pending)))
+            end
         else
-            um_success('all files up to date')
+            um_success(__pasthetic_allinone == true and 'all-in-one up to date' or 'all files up to date')
             if writefile ~= nil and type(body) == 'string' then
                 pcall(writefile, MANIFEST_PATH, body)
             end
@@ -438,7 +503,11 @@ function update_manager.download(callback)
             if type(um_state.manifest_body) == 'string' then
                 pcall(writefile, MANIFEST_PATH, um_state.manifest_body)
             end
-            um_success(('%d file(s) updated — reload script to apply'):format(downloaded))
+            um_success(
+                __pasthetic_allinone == true
+                    and 'all-in-one updated — reload script to apply'
+                    or ('%d file(s) updated — reload script to apply'):format(downloaded)
+            )
         else
             um_git_error(('download partially failed: %d ok, %d failed'):format(downloaded, failed))
         end
@@ -455,7 +524,9 @@ function update_manager.download(callback)
             if local_entry_path == nil then
                 finish_one(false)
             else
-                local target_path = local_path(local_entry_path)
+                local target_path = __pasthetic_allinone == true
+                    and (__pasthetic_allinone_target_path or local_entry_path)
+                    or local_path(local_entry_path)
                 local urls = {}
                 for j = 1, #base_urls do
                     urls[#urls + 1] = base_urls[j] .. entry.path
@@ -480,10 +551,10 @@ end
 -- ====================================================================
 
 do
-    local installed = readfile ~= nil and (function()
+    local installed = __pasthetic_allinone == true or (readfile ~= nil and (function()
         local ok, result = pcall(readfile, local_path('pasthetic\\core.lua'))
         return ok and type(result) == 'string'
-    end)()
+    end)())
 
     if not installed then
         log_loader_reinstall_hint()
@@ -789,7 +860,11 @@ pasthetic_runtime_modules.start({
 -- Auto-update: check on startup, show download button if needed
 -- ====================================================================
 
-local download_update_btn = ui.new_button('CONFIG', 'Lua', 'Download latest version', function()
+local download_update_btn = ui.new_button(
+    'CONFIG',
+    'Lua',
+    __pasthetic_allinone == true and 'Download latest all-in-one' or 'Download latest version',
+    function()
     if um_state.busy then return end
     if update_manager.has_update() then
         update_manager.download(function(success)
