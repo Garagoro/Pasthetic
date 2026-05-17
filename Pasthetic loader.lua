@@ -370,6 +370,24 @@ local function get_base_urls(manifest)
     return list
 end
 
+local function reload_active_scripts_after_update()
+    if client == nil or type(client.reload_active_scripts) ~= 'function' then
+        return false
+    end
+
+    local function reload()
+        pcall(client.reload_active_scripts)
+    end
+
+    if type(client.delay_call) == 'function' then
+        client.delay_call(0.15, reload)
+    else
+        reload()
+    end
+
+    return true
+end
+
 local function cache_manifest(body)
     if __pasthetic_allinone == true then
         return
@@ -528,9 +546,13 @@ function update_manager.download(callback)
             end
             um_success(
                 __pasthetic_allinone == true
-                    and 'all-in-one updated — reload script to apply'
-                    or ('%d file(s) updated — reload script to apply'):format(downloaded)
+                    and 'all-in-one updated — reloading active scripts...'
+                    or ('%d file(s) updated — reloading active scripts...'):format(downloaded)
             )
+
+            if not reload_active_scripts_after_update() then
+                um_log('reload active scripts manually to apply')
+            end
         else
             um_git_error(('download partially failed: %d ok, %d failed'):format(downloaded, failed))
         end
