@@ -3,7 +3,7 @@ setlocal
 
 cd /d "%~dp0"
 
-echo Building Pasthetic all-in-one...
+echo Building Pasthetic bundle...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\build_allinone.ps1" -UpdateManifest
 
 if errorlevel 1 (
@@ -15,6 +15,6 @@ if errorlevel 1 (
 
 echo.
 echo Done. Generated:
-echo %~dp0Pasthetic_allinone.lua
+echo %~dp0Pasthetic.bundle
 echo.
 pause
