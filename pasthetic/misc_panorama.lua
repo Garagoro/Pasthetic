@@ -78,11 +78,82 @@ function M.start(deps)
     }
 
     local cs_logo = panorama.loadstring([[
-        var panel = null;
         var cs_logo = null;
-        var original_transform = null;
-        var original_visibility = null;
-        var PANEL_ID = "PastheticCustomLogoPanel";
+        var hidden_images = [];
+
+        var _IsValid = function(target) {
+            return target && (!target.IsValid || target.IsValid());
+        };
+
+        var _HideLogoImages = function(target) {
+            if (!_IsValid(target)) {
+                return;
+            }
+
+            var count = 0;
+            try {
+                count = target.GetChildCount ? target.GetChildCount() : 0;
+            } catch (e) {
+                return;
+            }
+
+            for (var i = 0; i < count; i++) {
+                var child = null;
+
+                try {
+                    child = target.GetChild(i);
+                } catch (e) {}
+
+                if (!_IsValid(child)) {
+                    continue;
+                }
+
+                if (child.paneltype === "Image") {
+                    hidden_images.push({
+                        panel: child,
+                        opacity: child.style.opacity || "1"
+                    });
+
+                    child.style.opacity = "0";
+                }
+
+                _HideLogoImages(child);
+            }
+        };
+
+        var _RestoreLogoImages = function() {
+            for (var i = 0; i < hidden_images.length; i++) {
+                var item = hidden_images[i];
+
+                if (_IsValid(item.panel)) {
+                    item.panel.style.opacity = item.opacity;
+                }
+            }
+
+            hidden_images = [];
+        };
+
+        var _ApplyHomeBackground = function(imageUrl) {
+            if (!_IsValid(cs_logo)) {
+                return;
+            }
+
+            cs_logo.style.backgroundImage = 'url("' + imageUrl + '")';
+            cs_logo.style.backgroundPosition = "center";
+            cs_logo.style.backgroundSize = "55px 55px";
+            cs_logo.style.backgroundRepeat = "no-repeat";
+        };
+
+        var _RestoreHomeBackground = function() {
+            if (!_IsValid(cs_logo)) {
+                return;
+            }
+
+            cs_logo.style.backgroundImage = "none";
+            cs_logo.style.backgroundPosition = "center";
+            cs_logo.style.backgroundSize = "auto";
+            cs_logo.style.backgroundRepeat = "no-repeat";
+        };
 
         var _Create = function(imageUrl) {
             cs_logo = $.GetContextPanel().FindChildTraverse("MainMenuNavBarHome");
@@ -90,75 +161,30 @@ function M.start(deps)
                 return;
             }
 
-            original_transform = cs_logo.style.transform || 'none';
-            original_visibility = cs_logo.style.visibility || 'visible';
-
-            cs_logo.style.visibility = 'collapse';
-            try { cs_logo.style.transform = 'translate3d(-9999px, -9999px, 0)'; } catch (e) {}
-
-            var parent = cs_logo.GetParent();
-            if (!parent) {
-                return;
-            }
-
-            var old = $.GetContextPanel().FindChildTraverse(PANEL_ID);
+            var old = $.GetContextPanel().FindChildTraverse("CustomPanel");
             if (old) {
                 old.DeleteAsync(0.0);
             }
 
-            old = $.GetContextPanel().FindChildTraverse("CustomPanel");
-            if (old) {
-                old.DeleteAsync(0.0);
-            }
-
-            panel = $.CreatePanel("Panel", parent, PANEL_ID);
-            if (!panel) {
-                return;
-            }
-
-            if (!panel.BLoadLayoutFromString(
-            `<root>
-                <Panel class="mainmenu-navbar__btn-small mainmenu-navbar__btn-home MainMenuModeOnly">
-                    <RadioButton id="main_menu"
-                        style="width: 100%; height: 100%; horizontal-align: center; vertical-align: center;"
-                        onactivate="MainMenu.OnHomeButtonPressed(); $.DispatchEvent( 'PlaySoundEffect', 'UIPanorama.mainmenu_press_home', 'MOUSE' );"
-                        oncancel="MainMenu.OnEscapeKeyPressed();"
-                        onmouseover="UiToolkitAPI.ShowTextTooltip('main_menu', 't.me/debugoverlay');"
-                        onmouseout="UiToolkitAPI.HideTextTooltip();">
-                        <Image textureheight="55" texturewidth="-1" src="${imageUrl}"
-                            style="horizontal-align: center; vertical-align: center;" />
-                    </RadioButton>
-                </Panel>
-            </root>`,
-        false, false)) {
-            panel.DeleteAsync(0);
-            panel = null;
-            return;
-            }
-
-            parent.MoveChildBefore(panel, parent.GetChild(0));
+            _RestoreLogoImages();
+            _RestoreHomeBackground();
+            _HideLogoImages(cs_logo);
+            _ApplyHomeBackground(imageUrl);
         };
 
         var _Destroy = function() {
-            var current = $.GetContextPanel().FindChildTraverse(PANEL_ID);
-            if (current && current !== panel) {
-                current.DeleteAsync(0.0);
-            }
-
-            if (panel) {
-                panel.DeleteAsync(0.0);
-                panel = null;
-            }
-
-            if (cs_logo) {
-                try { cs_logo.style.transform = original_transform; } catch (e) {}
-                cs_logo.style.visibility = original_visibility;
-            }
+            _RestoreLogoImages();
+            _RestoreHomeBackground();
         };
 
         var _Exists = function() {
-            var current = $.GetContextPanel().FindChildTraverse(PANEL_ID);
-            return current && current.IsValid();
+            for (var i = 0; i < hidden_images.length; i++) {
+                if (_IsValid(hidden_images[i].panel)) {
+                    return true;
+                }
+            }
+
+            return false;
         };
 
         return {
@@ -858,6 +884,170 @@ function M.start(deps)
         };
     ]], 'CSGOMainMenu')()
 
+    local factory_restore = panorama.loadstring([[
+        var _IsValid = function(panel) {
+            return panel && (!panel.IsValid || panel.IsValid());
+        };
+
+        var _Root = function() {
+            try {
+                return $.GetContextPanel();
+            } catch (e) {}
+
+            return null;
+        };
+
+        var _Find = function(id) {
+            var root = _Root();
+            if (!_IsValid(root)) {
+                return null;
+            }
+
+            try {
+                var panel = root.FindChildTraverse(id);
+                return _IsValid(panel) ? panel : null;
+            } catch (e) {}
+
+            return null;
+        };
+
+        var _Delete = function(id) {
+            var panel = _Find(id);
+            if (_IsValid(panel)) {
+                try { panel.DeleteAsync(0.0); } catch (e) {}
+            }
+        };
+
+        var _Show = function(id) {
+            var panel = _Find(id);
+            if (!_IsValid(panel)) {
+                return;
+            }
+
+            try { panel.visible = true; } catch (e) {}
+            panel.style.visibility = "visible";
+            panel.style.opacity = "1";
+            try { panel.style.transform = "none"; } catch (e) {}
+            try { panel.hittest = true; } catch (e) {}
+            try { panel.hittestchildren = true; } catch (e) {}
+        };
+
+        var _RestoreImages = function(panel) {
+            if (!_IsValid(panel)) {
+                return;
+            }
+
+            var count = 0;
+            try {
+                count = panel.GetChildCount ? panel.GetChildCount() : 0;
+            } catch (e) {
+                return;
+            }
+
+            for (var i = 0; i < count; i++) {
+                var child = null;
+
+                try {
+                    child = panel.GetChild(i);
+                } catch (e) {}
+
+                if (!_IsValid(child)) {
+                    continue;
+                }
+
+                if (child.paneltype === "Image") {
+                    child.style.opacity = "1";
+                }
+
+                _RestoreImages(child);
+            }
+        };
+
+        var _RestoreHome = function() {
+            var home = _Find("MainMenuNavBarHome");
+            if (!_IsValid(home)) {
+                return;
+            }
+
+            home.style.backgroundImage = "none";
+            home.style.backgroundPosition = "center";
+            home.style.backgroundSize = "auto";
+            home.style.backgroundRepeat = "no-repeat";
+            try { home.visible = true; } catch (e) {}
+            home.style.visibility = "visible";
+            home.style.opacity = "1";
+            try { home.style.transform = "none"; } catch (e) {}
+            try { home.hittest = true; } catch (e) {}
+            try { home.hittestchildren = true; } catch (e) {}
+            _RestoreImages(home);
+        };
+
+        var _RestoreBackground = function() {
+            var movieElements = [
+                "MainMenuMovie",
+                "MainMenuMovieParent",
+                "MoviePlayer"
+            ];
+
+            for (var i = 0; i < movieElements.length; i++) {
+                _Show(movieElements[i]);
+            }
+
+            var bgElements = [
+                "MainMenuBackground",
+                "MainMenu",
+                "MainMenuContainerPanel"
+            ];
+
+            for (var j = 0; j < bgElements.length; j++) {
+                var panel = _Find(bgElements[j]);
+                if (_IsValid(panel)) {
+                    panel.style.backgroundImage = "none";
+                    panel.style.opacity = "1";
+                }
+            }
+        };
+
+        var _Restore = function() {
+            var deleteIds = [
+                "PastheticCustomLogoPanel",
+                "CustomPanel",
+                "news_panel",
+                "custom_stats_button",
+                "custom_watch_button",
+                "custom_sidebar_panel",
+                "custom_model_panel",
+                "PastheticBackgroundLayer",
+                "PastheticSimpleServerBrowser"
+            ];
+
+            for (var i = 0; i < deleteIds.length; i++) {
+                _Delete(deleteIds[i]);
+            }
+
+            var showIds = [
+                "MainMenuNavBarHome",
+                "JsNewsContainer",
+                "MainMenuNavBarStats",
+                "MainMenuNavBarWatch",
+                "JsMainMenuSidebar",
+                "NotificationsContainer",
+                "MainMenuVanityParent"
+            ];
+
+            for (var j = 0; j < showIds.length; j++) {
+                _Show(showIds[j]);
+            }
+
+            _RestoreHome();
+            _RestoreBackground();
+        };
+
+        return {
+            restore: _Restore
+        };
+    ]], 'CSGOMainMenu')()
+
     local api = {}
     local unload
 
@@ -1019,6 +1209,7 @@ function M.start(deps)
         call_method(remove_sidebar, 'show')
         call_method(remove_vac_panel, 'show')
         call_method(remove_model, 'show')
+        call_method(factory_restore, 'restore')
 
         if rawget(_G, MODULE_UNLOAD_KEY) == unload then
             _G[MODULE_UNLOAD_KEY] = nil

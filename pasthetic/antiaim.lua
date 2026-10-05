@@ -2365,79 +2365,6 @@ local antiaim = { } do
         end
     end
 
-    local backtrack_disruptor = { } do
-        local ref = resource.antiaim.features.backtrack_disruptor
-        local next_pulse_command = 0
-
-        local function is_exploit_ready()
-            if not software.is_double_tap_active() and not software.is_on_shot_antiaim_active() then
-                return false
-            end
-
-            if software.is_duck_peek_assist() then
-                return false
-            end
-
-            return true
-        end
-
-        local function is_builder_defensive_enabled(items)
-            return items ~= nil
-                and items.defensive ~= nil
-                and items.defensive.enabled ~= nil
-                and items.defensive.enabled:get()
-        end
-
-        local function get_state()
-            if not localplayer.is_onground then
-                if localplayer.is_crouched then
-                    return 'Air-Crouch'
-                end
-
-                return 'Air'
-            end
-
-            if localplayer.is_crouched then
-                if localplayer.is_moving then
-                    return 'Move-Crouch'
-                end
-
-                return 'Crouch'
-            end
-
-            if localplayer.is_moving then
-                if software.is_slow_motion() then
-                    return 'Slow Walk'
-                end
-
-                return 'Moving'
-            end
-
-            return 'Standing'
-        end
-
-        local function is_state_active()
-            return ref.mode:get(
-                get_state()
-            )
-        end
-
-        local function schedule_next(cmd)
-            local delay_min = ref.delay_min:get()
-            local delay_max = ref.delay_max:get()
-
-            if delay_min > delay_max then
-                delay_min, delay_max = delay_max, delay_min
-            end
-
-            next_pulse_command = cmd.command_number + utils.random_int(delay_min, delay_max)
-        end
-
-        function backtrack_disruptor:update(cmd, items)
-            next_pulse_command = 0
-        end
-    end
-
     local warmup_round_end = { } do
         local ref = resource.antiaim.features.warmup_round_end
 
@@ -2829,7 +2756,6 @@ local antiaim = { } do
         local active, items, state = builder:update(cmd, team)
 
         defensive:update(cmd)
-        backtrack_disruptor:update(cmd, active and items or nil)
 
         if antiaim_on_use:update(cmd, team) then
             return

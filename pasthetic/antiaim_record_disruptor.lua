@@ -24,6 +24,10 @@ function M.new(deps)
     local MIN_LOCAL_SPEED_SCALE = 0.18
     local PULSE_COOLDOWN_MIN = 8
     local PULSE_COOLDOWN_MAX = 16
+    local MIN_TOTAL_RANGE = 10
+    local MAX_TOTAL_RANGE = 70
+    local MAX_PEEK_PREDICT_TICKS = 8
+    local MIN_ENEMY_PEEK_SPEED = 20
 
     local state = {
         pulse_left = 0,
@@ -31,6 +35,8 @@ function M.new(deps)
         side = 1,
         strength = 0,
         velocity_scale = 1,
+        range_value = 0,
+        mode = 'full',
         last_threat = nil
     }
 
@@ -40,6 +46,8 @@ function M.new(deps)
         state.side = 1
         state.strength = 0
         state.velocity_scale = 1
+        state.range_value = 0
+        state.mode = 'full'
         state.last_threat = nil
     end
 
@@ -90,6 +98,31 @@ function M.new(deps)
         local scale = utils.clamp(speed / FULL_LOCAL_SPEED, 0, 1)
 
         return MIN_LOCAL_SPEED_SCALE + (1 - MIN_LOCAL_SPEED_SCALE) * scale
+    end
+
+    local function get_range_value()
+        if ref == nil or ref.range == nil then
+            return 0
+        end
+
+        return utils.clamp(ref.range:get() or 0, 0, 100)
+    end
+
+    local function get_active_range_scale(range_value)
+        local value = utils.clamp(range_value or get_range_value(), 1, 100)
+
+        return (value - 1) / 99
+    end
+
+    local function get_max_side_offset(range_value)
+        local scale = get_active_range_scale(range_value)
+        local total = MIN_TOTAL_RANGE + (MAX_TOTAL_RANGE - MIN_TOTAL_RANGE) * scale
+
+        return total * 0.5
+    end
+
+    local function get_prediction_ticks()
+        return MAX_PEEK_PREDICT_TICKS
     end
 
     local function get_distance2d(a, b)
@@ -143,14 +176,7 @@ function M.new(deps)
         return points
     end
 
-    local function can_threat_damage_local(me, threat, local_head)
-        local eye = get_eye_position(threat)
-
-        if eye == nil or local_head == nil then
-            return false, 0
-        end
-
-        local points = get_local_damage_points(me, local_head)
+    local function trace_threat_damage(me, threat, eye, points)
         local best_damage = 0
 
         for i = 1, #points do
@@ -167,7 +193,99 @@ function M.new(deps)
             end
         end
 
-        return best_damage > MIN_THREAT_DAMAGE, best_damage
+        return best_damage
+    end
+
+    local function offset_points(points, velocity, ticks)
+        local tickinterval = globals.tickinterval()
+        local multiplier = tickinterval * ticks
+        local offset_x = velocity.x * multiplier
+        local offset_y = velocity.y * multiplier
+        local offset_z = velocity.z * multiplier
+        local predicted = {}
+
+        for i = 1, #points do
+            local point = points[i]
+
+            predicted[i] = vector(
+                point.x + offset_x,
+                point.y + offset_y,
+                point.z + offset_z
+            )
+        end
+
+        return predicted
+    end
+
+    local function can_threat_damage_local(me, threat, local_head)
+        local eye = get_eye_position(threat)
+
+        if eye == nil or local_head == nil then
+            return false, 0, false
+        end
+
+        local points = get_local_damage_points(me, local_head)
+        local best_damage = trace_threat_damage(me, threat, eye, points)
+
+        if best_damage > MIN_THREAT_DAMAGE then
+            return true, best_damage, false
+        end
+
+        local predict_ticks = get_prediction_ticks()
+
+        if predict_ticks <= 0 or get_speed2d(threat) < MIN_ENEMY_PEEK_SPEED then
+            return false, best_damage, false
+        end
+
+        local velocity = get_velocity(threat)
+        local tickinterval = globals.tickinterval()
+
+        for tick = 1, predict_ticks do
+            local predicted_eye = vector(
+                eye.x + velocity.x * tickinterval * tick,
+                eye.y + velocity.y * tickinterval * tick,
+                eye.z + velocity.z * tickinterval * tick
+            )
+
+            local damage = trace_threat_damage(me, threat, predicted_eye, points)
+
+            if damage > best_damage then
+                best_damage = damage
+            end
+
+            if damage > MIN_THREAT_DAMAGE then
+                return true, damage, true
+            end
+        end
+
+        return false, best_damage, false
+    end
+
+    local function can_local_peek_into_threat(me, threat, local_points)
+        local eye = get_eye_position(threat)
+
+        if eye == nil or #local_points == 0 then
+            return false, 0
+        end
+
+        local velocity = get_velocity(me)
+        local predict_ticks = get_prediction_ticks()
+        local best_damage = 0
+
+        for tick = 1, predict_ticks do
+            local predicted_points = offset_points(local_points, velocity, tick)
+            local damage = trace_threat_damage(me, threat, eye, predicted_points)
+
+            if damage > best_damage then
+                best_damage = damage
+            end
+
+            if damage > MIN_THREAT_DAMAGE then
+                return true, damage
+            end
+        end
+
+        return false, best_damage
     end
 
     local function get_best_threat(me)
@@ -177,6 +295,7 @@ function M.new(deps)
         local view_pitch, view_yaw = client.camera_angles()
         local local_speed = get_speed2d(me)
         local velocity_scale = get_local_velocity_scale(me)
+        local range_value = get_range_value()
 
         if eye == nil or local_head == nil or my_origin == nil or view_pitch == nil then
             return nil
@@ -188,6 +307,8 @@ function M.new(deps)
 
         local best_threat = nil
         local best_score = 0
+        local best_mode = nil
+        local local_points = get_local_damage_points(me, local_head)
 
         local players = entity.get_players(true)
 
@@ -220,10 +341,19 @@ function M.new(deps)
             local fov_score = 1 - utils.clamp(fov / MAX_FOV, 0, 1)
             local distance_score = 1 - utils.clamp(distance / MAX_DISTANCE, 0, 1)
             local speed_score = utils.clamp(get_speed2d(player) / 260, 0, 1)
-            local can_damage, damage = can_threat_damage_local(me, player, local_head)
+            local can_damage, damage, predicted = can_threat_damage_local(me, player, local_head)
+            local mode = 'full'
 
             if not can_damage then
-                goto continue
+                local local_peek, local_peek_damage = can_local_peek_into_threat(me, player, local_points)
+
+                if not local_peek then
+                    goto continue
+                end
+
+                can_damage = true
+                damage = local_peek_damage
+                mode = 'local_peek'
             end
 
             local damage_score = utils.clamp(damage / 80, 0, 1)
@@ -236,9 +366,18 @@ function M.new(deps)
                 score = score + 0.08
             end
 
+            if predicted then
+                score = score + 0.06
+            end
+
+            if mode == 'local_peek' then
+                score = score + 0.06
+            end
+
             if score > best_score then
                 best_score = score
                 best_threat = player
+                best_mode = mode
             end
 
             ::continue::
@@ -248,7 +387,7 @@ function M.new(deps)
             return nil
         end
 
-        return best_threat, utils.clamp(best_score, 0, 1), velocity_scale
+        return best_threat, utils.clamp(best_score, 0, 1), velocity_scale, range_value, best_mode
     end
 
     local function get_backtrack_ticks()
@@ -259,7 +398,7 @@ function M.new(deps)
         )
     end
 
-    local function start_pulse(threat, score, velocity_scale)
+    local function start_pulse(threat, score, velocity_scale, range_value, mode)
         local max_ticks = get_backtrack_ticks()
         local pulse_score = score * (0.55 + velocity_scale * 0.45)
         local pulse = utils.clamp(
@@ -277,6 +416,8 @@ function M.new(deps)
         state.last_threat = threat
         state.strength = score
         state.velocity_scale = velocity_scale
+        state.range_value = range_value
+        state.mode = mode or 'full'
         state.pulse_left = pulse
     end
 
@@ -307,20 +448,20 @@ function M.new(deps)
             return false
         end
 
-        local threat, score, velocity_scale = get_best_threat(me)
+        local threat, score, velocity_scale, range_value, mode = get_best_threat(me)
 
         if threat == nil then
             state.last_threat = nil
             return false
         end
 
-        start_pulse(threat, score, velocity_scale)
+        start_pulse(threat, score, velocity_scale, range_value, mode)
 
         return true
     end
 
     function record_disruptor:update(cmd, buffer)
-        if ref == nil or not ref.enabled:get() then
+        if get_range_value() <= 0 then
             reset()
             return false
         end
@@ -342,9 +483,23 @@ function M.new(deps)
             return false
         end
 
-        local base = (18 + state.strength * 28) * state.velocity_scale
-        local wobble = utils.random_int(-4, 4)
-        local offset = state.side * math.floor(base + wobble + 0.5)
+        local amount
+
+        if state.mode == 'local_peek' then
+            amount = math.max(1, math.floor(state.range_value * 0.1 + 0.5))
+        else
+            local max_side_offset = get_max_side_offset(state.range_value)
+            local base = max_side_offset * (0.45 + state.strength * 0.55) * state.velocity_scale
+            local wobble = utils.random_int(-2, 2)
+
+            amount = utils.clamp(
+                math.floor(base + wobble + 0.5),
+                1,
+                math.floor(max_side_offset + 0.5)
+            )
+        end
+
+        local offset = state.side * amount
 
         buffer.yaw_offset = utils.normalize(
             (buffer.yaw_offset or 0) + offset,

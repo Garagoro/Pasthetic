@@ -1674,46 +1674,10 @@ local resource do
                 features.avoid_backstab = avoid_backstab
             end
 
-            local backtrack_disruptor = { } do
-                backtrack_disruptor.enabled = config_system.push(
-                    'Features', 'backtrack_disruptor.enabled', menu.new(
-                        ui.new_checkbox, 'AA', 'Anti-aimbot angles', 'Backtrack disruptor'
-                    )
-                )
-
-                backtrack_disruptor.mode = config_system.push(
-                    'Features', 'backtrack_disruptor.mode', menu.new(
-                        ui.new_multiselect, 'AA', 'Anti-aimbot angles', new_key('Break when', 'backtrack_disruptor'), {
-                            'Standing',
-                            'Moving',
-                            'Slow Walk',
-                            'Air',
-                            'Air-Crouch',
-                            'Crouch',
-                            'Move-Crouch'
-                        }
-                    )
-                )
-
-                backtrack_disruptor.delay_min = config_system.push(
-                    'Features', 'backtrack_disruptor.delay_min', menu.new(
-                        ui.new_slider, 'AA', 'Anti-aimbot angles', new_key('Min delay', 'backtrack_disruptor'), 2, 64, 8, true, 't'
-                    )
-                )
-
-                backtrack_disruptor.delay_max = config_system.push(
-                    'Features', 'backtrack_disruptor.delay_max', menu.new(
-                        ui.new_slider, 'AA', 'Anti-aimbot angles', new_key('Max delay', 'backtrack_disruptor'), 2, 64, 24, true, 't'
-                    )
-                )
-
-                features.backtrack_disruptor = backtrack_disruptor
-            end
-
             local record_disruptor = { } do
-                record_disruptor.enabled = config_system.push(
-                    'Features', 'record_disruptor.enabled', menu.new(
-                        ui.new_checkbox, 'AA', 'Anti-aimbot angles', 'Record disruptor'
+                record_disruptor.range = config_system.push(
+                    'Features', 'record_disruptor.range', menu.new(
+                        ui.new_slider, 'AA', 'Anti-aimbot angles', 'Record disruptor', 0, 100, 0, true, '%'
                     )
                 )
 
@@ -3047,20 +3011,9 @@ local resource do
                     ::continue::
                 end
 
-                local is_backtrack_disruptor = ref.backtrack_disruptor.enabled:get() do
-                    menu_logic.set(ref.backtrack_disruptor.enabled, true)
-                end
-
-                local is_record_disruptor = ref.record_disruptor.enabled:get() do
-                    menu_logic.set(ref.record_disruptor.enabled, true)
-
-                    if not is_record_disruptor then
-                        goto continue
-                    end
-
+                do
+                    menu_logic.set(ref.record_disruptor.range, true)
                     menu_logic.set(ref.record_disruptor.separator, true)
-
-                    ::continue::
                 end
 
                 local is_safe_head = ref.safe_head.enabled:get() do

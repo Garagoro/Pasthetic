@@ -3,7 +3,7 @@
 local __pasthetic_allinone = true
 local __pasthetic_bundle = true
 local __pasthetic_disable_allinone_update = true
-local __pasthetic_allinone_version = "2026.10.05-1"
+local __pasthetic_allinone_version = "2026.10.05-2"
 local __pasthetic_allinone_target_path = ".\\Pasthetic.bundle"
 local PASTHETIC_GIT_URL = 'https://github.com/Garagoro/Pasthetic'
 local function log_loader_reinstall_hint()
@@ -2940,79 +2940,6 @@ local antiaim = { } do
         end
     end
 
-    local backtrack_disruptor = { } do
-        local ref = resource.antiaim.features.backtrack_disruptor
-        local next_pulse_command = 0
-
-        local function is_exploit_ready()
-            if not software.is_double_tap_active() and not software.is_on_shot_antiaim_active() then
-                return false
-            end
-
-            if software.is_duck_peek_assist() then
-                return false
-            end
-
-            return true
-        end
-
-        local function is_builder_defensive_enabled(items)
-            return items ~= nil
-                and items.defensive ~= nil
-                and items.defensive.enabled ~= nil
-                and items.defensive.enabled:get()
-        end
-
-        local function get_state()
-            if not localplayer.is_onground then
-                if localplayer.is_crouched then
-                    return 'Air-Crouch'
-                end
-
-                return 'Air'
-            end
-
-            if localplayer.is_crouched then
-                if localplayer.is_moving then
-                    return 'Move-Crouch'
-                end
-
-                return 'Crouch'
-            end
-
-            if localplayer.is_moving then
-                if software.is_slow_motion() then
-                    return 'Slow Walk'
-                end
-
-                return 'Moving'
-            end
-
-            return 'Standing'
-        end
-
-        local function is_state_active()
-            return ref.mode:get(
-                get_state()
-            )
-        end
-
-        local function schedule_next(cmd)
-            local delay_min = ref.delay_min:get()
-            local delay_max = ref.delay_max:get()
-
-            if delay_min > delay_max then
-                delay_min, delay_max = delay_max, delay_min
-            end
-
-            next_pulse_command = cmd.command_number + utils.random_int(delay_min, delay_max)
-        end
-
-        function backtrack_disruptor:update(cmd, items)
-            next_pulse_command = 0
-        end
-    end
-
     local warmup_round_end = { } do
         local ref = resource.antiaim.features.warmup_round_end
 
@@ -3404,7 +3331,6 @@ local antiaim = { } do
         local active, items, state = builder:update(cmd, team)
 
         defensive:update(cmd)
-        backtrack_disruptor:update(cmd, active and items or nil)
 
         if antiaim_on_use:update(cmd, team) then
             return
@@ -3706,495 +3632,6 @@ end
 
 
     return antiaim
-end
-
-function M.health()
-    return true
-end
-
-return M
-]],
-    ["pasthetic/antiaim_backtrack_poison"] = [[local M = {}
-
-function M.start(deps)
-    deps = deps or {}
-
-    local client = assert(deps.client, 'antiaim_backtrack_poison: client dependency is required')
-    local entity = assert(deps.entity, 'antiaim_backtrack_poison: entity dependency is required')
-    local globals = assert(deps.globals, 'antiaim_backtrack_poison: globals dependency is required')
-    local utils = assert(deps.utils, 'antiaim_backtrack_poison: utils dependency is required')
-    local software = assert(deps.software, 'antiaim_backtrack_poison: software dependency is required')
-    local exploit = assert(deps.exploit, 'antiaim_backtrack_poison: exploit dependency is required')
-    local resource = assert(deps.resource, 'antiaim_backtrack_poison: resource dependency is required')
-    local renderer = deps.renderer or renderer
-    local bit = deps.bit or bit
-
-    local ref = resource.antiaim.features.backtrack_disruptor
-
-    local TELEPORT_DISTANCE_SQR = 64 * 64
-    local RELEASE_CHOKE_MIN = 5
-    local RELEASE_BURST_TICKS = 12
-    local RELEASE_BURST_PULSES = 4
-    local LIGHT_SCAN_INTERVAL = 4
-
-    local last_choked = 0
-    local last_defensive_active = false
-    local last_sim_tick = nil
-    local last_origin = nil
-    local stalled_origin = nil
-    local sim_stalled = false
-
-    local burst_until = 0
-    local burst_left = 0
-    local next_burst_pulse = 0
-    local next_light_pulse = 0
-    local next_light_scan = 0
-    local cached_hittable = false
-    local defensive_indicator = false
-
-    local function reset()
-        last_choked = 0
-        last_defensive_active = false
-        last_sim_tick = nil
-        last_origin = nil
-        stalled_origin = nil
-        sim_stalled = false
-        burst_until = 0
-        burst_left = 0
-        next_burst_pulse = 0
-        next_light_pulse = 0
-        next_light_scan = 0
-        cached_hittable = false
-        defensive_indicator = false
-    end
-
-    local function vec3(x, y, z)
-        if x == nil then
-            return nil
-        end
-
-        return { x = x, y = y or 0, z = z or 0 }
-    end
-
-    local function dist2d_sqr(a, b)
-        if a == nil or b == nil then
-            return 0
-        end
-
-        local dx = a.x - b.x
-        local dy = a.y - b.y
-
-        return dx * dx + dy * dy
-    end
-
-    local function get_origin(player)
-        return vec3(entity.get_origin(player))
-    end
-
-    local function get_velocity(player)
-        local x, y, z = entity.get_prop(player, 'm_vecVelocity')
-
-        return x or 0, y or 0, z or 0
-    end
-
-    local function get_speed2d(player)
-        local x, y = get_velocity(player)
-
-        return math.sqrt(x * x + y * y)
-    end
-
-    local function is_shift_exploit_active()
-        return software.is_double_tap_active()
-            or software.is_on_shot_antiaim_active()
-    end
-
-    local function get_exploit_defensive()
-        local data = exploit.get()
-
-        if data == nil or data.defensive == nil then
-            return nil
-        end
-
-        return data.defensive
-    end
-
-    local function is_defensive_active()
-        local defensive = get_exploit_defensive()
-
-        return defensive ~= nil and (defensive.left or 0) > 0
-    end
-
-    local function get_esp_flag(player, bit_index)
-        if player == nil then
-            return false
-        end
-
-        local data = entity.get_esp_data(player)
-
-        if data == nil or data.flags == nil then
-            return false
-        end
-
-        return bit.band(data.flags, bit.lshift(1, bit_index)) ~= 0
-    end
-
-    local function get_eye_position(player)
-        local ox, oy, oz = entity.get_origin(player)
-        local vx, vy, vz = entity.get_prop(player, 'm_vecViewOffset')
-
-        if ox == nil or vx == nil then
-            return nil
-        end
-
-        return {
-            x = ox + vx,
-            y = oy + vy,
-            z = oz + vz
-        }
-    end
-
-    local function get_local_points(me)
-        local points = {}
-        local hitboxes = { 0, 2, 3, 4 }
-
-        for i = 1, #hitboxes do
-            local x, y, z = entity.hitbox_position(me, hitboxes[i])
-
-            if x ~= nil then
-                points[#points + 1] = { x = x, y = y, z = z }
-            end
-        end
-
-        if #points == 0 then
-            local origin = get_origin(me)
-
-            if origin ~= nil then
-                points[1] = { x = origin.x, y = origin.y, z = origin.z + 62 }
-                points[2] = { x = origin.x, y = origin.y, z = origin.z + 48 }
-            end
-        end
-
-        return points
-    end
-
-    local function offset_points(points, dx, dy, dz)
-        local shifted = {}
-
-        for i = 1, #points do
-            local point = points[i]
-            shifted[i] = {
-                x = point.x + dx,
-                y = point.y + dy,
-                z = point.z + (dz or 0)
-            }
-        end
-
-        return shifted
-    end
-
-    local function trace_enemy_to_points(enemy, points)
-        local source = get_eye_position(enemy)
-
-        if source == nil then
-            return false
-        end
-
-        for i = 1, #points do
-            local point = points[i]
-            local _, damage = client.trace_bullet(
-                enemy,
-                source.x, source.y, source.z,
-                point.x, point.y, point.z,
-                true
-            )
-
-            if damage ~= nil and damage > 8 then
-                return true
-            end
-        end
-
-        return false
-    end
-
-    local function are_points_hittable(me, points)
-        local threat = client.current_threat()
-
-        if threat ~= nil and entity.is_alive(threat) and not entity.is_dormant(threat) then
-            if get_esp_flag(threat, 11) or trace_enemy_to_points(threat, points) then
-                return true
-            end
-        end
-
-        local enemies = entity.get_players(true)
-
-        for i = 1, #enemies do
-            local enemy = enemies[i]
-
-            if not entity.is_dormant(enemy)
-                and entity.is_alive(enemy)
-                and trace_enemy_to_points(enemy, points)
-            then
-                return true
-            end
-        end
-
-        return false
-    end
-
-    local function is_local_hittable(me)
-        return are_points_hittable(me, get_local_points(me))
-    end
-
-    local function update_hittable_cache(me)
-        local tick = globals.tickcount()
-
-        if tick < next_light_scan then
-            return cached_hittable
-        end
-
-        next_light_scan = tick + LIGHT_SCAN_INTERVAL
-        cached_hittable = is_local_hittable(me)
-
-        return cached_hittable
-    end
-
-    local function is_weapon_blocked(me)
-        local weapon = entity.get_player_weapon(me)
-
-        if weapon == nil then
-            return true
-        end
-
-        if get_esp_flag(me, 5) then
-            return true
-        end
-
-        local clip = entity.get_prop(weapon, 'm_iClip1')
-
-        if clip ~= nil and clip <= 0 then
-            return true
-        end
-
-        local time = globals.curtime() + globals.tickinterval()
-        local next_attack = entity.get_prop(me, 'm_flNextAttack') or 0
-        local next_primary_attack = entity.get_prop(weapon, 'm_flNextPrimaryAttack') or 0
-        local postpone_fire = entity.get_prop(weapon, 'm_flPostponeFireReadyTime') or 0
-
-        return next_attack > time
-            or next_primary_attack > time
-            or postpone_fire > time
-    end
-
-    local function start_release_burst(cmd)
-        burst_left = math.max(burst_left, RELEASE_BURST_PULSES)
-        burst_until = math.max(burst_until, cmd.command_number + RELEASE_BURST_TICKS)
-        next_burst_pulse = math.min(next_burst_pulse == 0 and cmd.command_number or next_burst_pulse, cmd.command_number)
-    end
-
-    local function can_pulse(cmd, me)
-        if cmd == nil or cmd.command_number == nil then
-            return false
-        end
-
-        if not ref.enabled:get() then
-            return false
-        end
-
-        if cmd.force_defensive == 1
-            or cmd.force_defensive == true
-            or cmd.in_attack == 1
-            or cmd.in_attack == true
-            or cmd.in_attack2 == 1
-            or cmd.in_attack2 == true
-        then
-            return false
-        end
-
-        if software.is_duck_peek_assist() or not is_shift_exploit_active() then
-            return false
-        end
-
-        if is_defensive_active() then
-            return false
-        end
-
-        return entity.is_alive(me)
-    end
-
-    local function update_sim_release(me)
-        local simtime = entity.get_prop(me, 'm_flSimulationTime')
-        local origin = get_origin(me)
-
-        if simtime == nil or origin == nil then
-            return false
-        end
-
-        local sim_tick = math.floor(simtime / globals.tickinterval() + 0.5)
-        local released = false
-
-        if last_sim_tick ~= nil then
-            if sim_tick <= last_sim_tick then
-                if not sim_stalled then
-                    stalled_origin = last_origin or origin
-                end
-
-                sim_stalled = true
-            elseif sim_stalled then
-                released = dist2d_sqr(stalled_origin, origin) >= TELEPORT_DISTANCE_SQR * 0.5
-                sim_stalled = false
-                stalled_origin = nil
-            end
-        end
-
-        if last_sim_tick == nil or sim_tick > last_sim_tick then
-            last_sim_tick = sim_tick
-            last_origin = origin
-        end
-
-        return released
-    end
-
-    local function update_release_triggers(cmd, me)
-        local released = false
-        local choked = cmd.chokedcommands or 0
-        local defensive_active = is_defensive_active()
-
-        if last_choked >= RELEASE_CHOKE_MIN and choked == 0 then
-            released = true
-        end
-
-        if last_defensive_active and not defensive_active and get_speed2d(me) > 20 then
-            released = true
-        end
-
-        if update_sim_release(me) then
-            released = true
-        end
-
-        last_choked = choked
-        last_defensive_active = defensive_active
-
-        if released then
-            start_release_burst(cmd)
-        end
-    end
-
-    local function apply_release_burst(cmd, me)
-        if burst_left <= 0 or cmd.command_number > burst_until then
-            burst_left = 0
-            burst_until = 0
-            next_burst_pulse = 0
-            return false
-        end
-
-        if not can_pulse(cmd, me) then
-            return false
-        end
-
-        if cmd.command_number < next_burst_pulse then
-            return false
-        end
-
-        cmd.force_defensive = 1
-        defensive_indicator = true
-        burst_left = burst_left - 1
-        next_burst_pulse = cmd.command_number + utils.random_int(1, 2)
-
-        return true
-    end
-
-    local function apply_light_pulse(cmd, me)
-        if not can_pulse(cmd, me) then
-            next_light_pulse = 0
-            return false
-        end
-
-        if not is_weapon_blocked(me) or not update_hittable_cache(me) then
-            next_light_pulse = 0
-            return false
-        end
-
-        if next_light_pulse == 0 then
-            local speed = get_speed2d(me)
-            local min_delay = speed > 120 and 7 or 11
-            local max_delay = speed > 120 and 14 or 22
-
-            next_light_pulse = cmd.command_number + utils.random_int(min_delay, max_delay)
-            return false
-        end
-
-        if cmd.command_number < next_light_pulse then
-            return false
-        end
-
-        cmd.force_defensive = 1
-        defensive_indicator = true
-        next_light_pulse = cmd.command_number + utils.random_int(8, 18)
-
-        return true
-    end
-
-    local function on_setup_command(cmd)
-        local me = entity.get_local_player()
-
-        if me == nil or not entity.is_alive(me) then
-            reset()
-            return
-        end
-
-        if not ref.enabled:get() then
-            reset()
-            return
-        end
-
-        defensive_indicator = is_defensive_active()
-
-        if apply_release_burst(cmd, me) then
-            return
-        end
-    end
-
-    local function on_paint_ui()
-        if renderer == nil or not ref.enabled:get() then
-            return
-        end
-
-        local me = entity.get_local_player()
-
-        if me == nil or not entity.is_alive(me) then
-            return
-        end
-
-        local active = defensive_indicator or is_defensive_active()
-        local prefix = 'Defensive: '
-        local value = active and 'True' or 'False'
-        local screen_w, screen_h = client.screen_size()
-        local prefix_w = renderer.measure_text('', prefix)
-        local value_w = renderer.measure_text('', value)
-        local x = screen_w * 0.5 - (prefix_w + value_w) * 0.5
-        local y = screen_h - 110
-        local r, g, b = 225, 75, 75
-
-        if active then
-            r, g, b = 90, 220, 115
-        end
-
-        renderer.text(x, y, 235, 235, 235, 230, '', nil, prefix)
-        renderer.text(x + prefix_w, y, r, g, b, 235, '', nil, value)
-    end
-
-    utils.event_callback('shutdown', reset, true)
-    utils.event_callback('player_death', function(e)
-        local me = entity.get_local_player()
-
-        if me ~= nil and client.userid_to_entindex(e.userid) == me then
-            reset()
-        end
-    end, true)
-    utils.event_callback('round_start', reset, true)
-    utils.event_callback('level_init', reset, true)
-    utils.event_callback('setup_command', on_setup_command, true)
-    utils.event_callback('paint_ui', on_paint_ui, true)
 end
 
 function M.health()
@@ -4884,6 +4321,10 @@ function M.new(deps)
     local MIN_LOCAL_SPEED_SCALE = 0.18
     local PULSE_COOLDOWN_MIN = 8
     local PULSE_COOLDOWN_MAX = 16
+    local MIN_TOTAL_RANGE = 10
+    local MAX_TOTAL_RANGE = 70
+    local MAX_PEEK_PREDICT_TICKS = 8
+    local MIN_ENEMY_PEEK_SPEED = 20
 
     local state = {
         pulse_left = 0,
@@ -4891,6 +4332,8 @@ function M.new(deps)
         side = 1,
         strength = 0,
         velocity_scale = 1,
+        range_value = 0,
+        mode = 'full',
         last_threat = nil
     }
 
@@ -4900,6 +4343,8 @@ function M.new(deps)
         state.side = 1
         state.strength = 0
         state.velocity_scale = 1
+        state.range_value = 0
+        state.mode = 'full'
         state.last_threat = nil
     end
 
@@ -4950,6 +4395,31 @@ function M.new(deps)
         local scale = utils.clamp(speed / FULL_LOCAL_SPEED, 0, 1)
 
         return MIN_LOCAL_SPEED_SCALE + (1 - MIN_LOCAL_SPEED_SCALE) * scale
+    end
+
+    local function get_range_value()
+        if ref == nil or ref.range == nil then
+            return 0
+        end
+
+        return utils.clamp(ref.range:get() or 0, 0, 100)
+    end
+
+    local function get_active_range_scale(range_value)
+        local value = utils.clamp(range_value or get_range_value(), 1, 100)
+
+        return (value - 1) / 99
+    end
+
+    local function get_max_side_offset(range_value)
+        local scale = get_active_range_scale(range_value)
+        local total = MIN_TOTAL_RANGE + (MAX_TOTAL_RANGE - MIN_TOTAL_RANGE) * scale
+
+        return total * 0.5
+    end
+
+    local function get_prediction_ticks()
+        return MAX_PEEK_PREDICT_TICKS
     end
 
     local function get_distance2d(a, b)
@@ -5003,14 +4473,7 @@ function M.new(deps)
         return points
     end
 
-    local function can_threat_damage_local(me, threat, local_head)
-        local eye = get_eye_position(threat)
-
-        if eye == nil or local_head == nil then
-            return false, 0
-        end
-
-        local points = get_local_damage_points(me, local_head)
+    local function trace_threat_damage(me, threat, eye, points)
         local best_damage = 0
 
         for i = 1, #points do
@@ -5027,7 +4490,99 @@ function M.new(deps)
             end
         end
 
-        return best_damage > MIN_THREAT_DAMAGE, best_damage
+        return best_damage
+    end
+
+    local function offset_points(points, velocity, ticks)
+        local tickinterval = globals.tickinterval()
+        local multiplier = tickinterval * ticks
+        local offset_x = velocity.x * multiplier
+        local offset_y = velocity.y * multiplier
+        local offset_z = velocity.z * multiplier
+        local predicted = {}
+
+        for i = 1, #points do
+            local point = points[i]
+
+            predicted[i] = vector(
+                point.x + offset_x,
+                point.y + offset_y,
+                point.z + offset_z
+            )
+        end
+
+        return predicted
+    end
+
+    local function can_threat_damage_local(me, threat, local_head)
+        local eye = get_eye_position(threat)
+
+        if eye == nil or local_head == nil then
+            return false, 0, false
+        end
+
+        local points = get_local_damage_points(me, local_head)
+        local best_damage = trace_threat_damage(me, threat, eye, points)
+
+        if best_damage > MIN_THREAT_DAMAGE then
+            return true, best_damage, false
+        end
+
+        local predict_ticks = get_prediction_ticks()
+
+        if predict_ticks <= 0 or get_speed2d(threat) < MIN_ENEMY_PEEK_SPEED then
+            return false, best_damage, false
+        end
+
+        local velocity = get_velocity(threat)
+        local tickinterval = globals.tickinterval()
+
+        for tick = 1, predict_ticks do
+            local predicted_eye = vector(
+                eye.x + velocity.x * tickinterval * tick,
+                eye.y + velocity.y * tickinterval * tick,
+                eye.z + velocity.z * tickinterval * tick
+            )
+
+            local damage = trace_threat_damage(me, threat, predicted_eye, points)
+
+            if damage > best_damage then
+                best_damage = damage
+            end
+
+            if damage > MIN_THREAT_DAMAGE then
+                return true, damage, true
+            end
+        end
+
+        return false, best_damage, false
+    end
+
+    local function can_local_peek_into_threat(me, threat, local_points)
+        local eye = get_eye_position(threat)
+
+        if eye == nil or #local_points == 0 then
+            return false, 0
+        end
+
+        local velocity = get_velocity(me)
+        local predict_ticks = get_prediction_ticks()
+        local best_damage = 0
+
+        for tick = 1, predict_ticks do
+            local predicted_points = offset_points(local_points, velocity, tick)
+            local damage = trace_threat_damage(me, threat, eye, predicted_points)
+
+            if damage > best_damage then
+                best_damage = damage
+            end
+
+            if damage > MIN_THREAT_DAMAGE then
+                return true, damage
+            end
+        end
+
+        return false, best_damage
     end
 
     local function get_best_threat(me)
@@ -5037,6 +4592,7 @@ function M.new(deps)
         local view_pitch, view_yaw = client.camera_angles()
         local local_speed = get_speed2d(me)
         local velocity_scale = get_local_velocity_scale(me)
+        local range_value = get_range_value()
 
         if eye == nil or local_head == nil or my_origin == nil or view_pitch == nil then
             return nil
@@ -5048,6 +4604,8 @@ function M.new(deps)
 
         local best_threat = nil
         local best_score = 0
+        local best_mode = nil
+        local local_points = get_local_damage_points(me, local_head)
 
         local players = entity.get_players(true)
 
@@ -5080,10 +4638,19 @@ function M.new(deps)
             local fov_score = 1 - utils.clamp(fov / MAX_FOV, 0, 1)
             local distance_score = 1 - utils.clamp(distance / MAX_DISTANCE, 0, 1)
             local speed_score = utils.clamp(get_speed2d(player) / 260, 0, 1)
-            local can_damage, damage = can_threat_damage_local(me, player, local_head)
+            local can_damage, damage, predicted = can_threat_damage_local(me, player, local_head)
+            local mode = 'full'
 
             if not can_damage then
-                goto continue
+                local local_peek, local_peek_damage = can_local_peek_into_threat(me, player, local_points)
+
+                if not local_peek then
+                    goto continue
+                end
+
+                can_damage = true
+                damage = local_peek_damage
+                mode = 'local_peek'
             end
 
             local damage_score = utils.clamp(damage / 80, 0, 1)
@@ -5096,9 +4663,18 @@ function M.new(deps)
                 score = score + 0.08
             end
 
+            if predicted then
+                score = score + 0.06
+            end
+
+            if mode == 'local_peek' then
+                score = score + 0.06
+            end
+
             if score > best_score then
                 best_score = score
                 best_threat = player
+                best_mode = mode
             end
 
             ::continue::
@@ -5108,7 +4684,7 @@ function M.new(deps)
             return nil
         end
 
-        return best_threat, utils.clamp(best_score, 0, 1), velocity_scale
+        return best_threat, utils.clamp(best_score, 0, 1), velocity_scale, range_value, best_mode
     end
 
     local function get_backtrack_ticks()
@@ -5119,7 +4695,7 @@ function M.new(deps)
         )
     end
 
-    local function start_pulse(threat, score, velocity_scale)
+    local function start_pulse(threat, score, velocity_scale, range_value, mode)
         local max_ticks = get_backtrack_ticks()
         local pulse_score = score * (0.55 + velocity_scale * 0.45)
         local pulse = utils.clamp(
@@ -5137,6 +4713,8 @@ function M.new(deps)
         state.last_threat = threat
         state.strength = score
         state.velocity_scale = velocity_scale
+        state.range_value = range_value
+        state.mode = mode or 'full'
         state.pulse_left = pulse
     end
 
@@ -5167,20 +4745,20 @@ function M.new(deps)
             return false
         end
 
-        local threat, score, velocity_scale = get_best_threat(me)
+        local threat, score, velocity_scale, range_value, mode = get_best_threat(me)
 
         if threat == nil then
             state.last_threat = nil
             return false
         end
 
-        start_pulse(threat, score, velocity_scale)
+        start_pulse(threat, score, velocity_scale, range_value, mode)
 
         return true
     end
 
     function record_disruptor:update(cmd, buffer)
-        if ref == nil or not ref.enabled:get() then
+        if get_range_value() <= 0 then
             reset()
             return false
         end
@@ -5202,9 +4780,23 @@ function M.new(deps)
             return false
         end
 
-        local base = (18 + state.strength * 28) * state.velocity_scale
-        local wobble = utils.random_int(-4, 4)
-        local offset = state.side * math.floor(base + wobble + 0.5)
+        local amount
+
+        if state.mode == 'local_peek' then
+            amount = math.max(1, math.floor(state.range_value * 0.1 + 0.5))
+        else
+            local max_side_offset = get_max_side_offset(state.range_value)
+            local base = max_side_offset * (0.45 + state.strength * 0.55) * state.velocity_scale
+            local wobble = utils.random_int(-2, 2)
+
+            amount = utils.clamp(
+                math.floor(base + wobble + 0.5),
+                1,
+                math.floor(max_side_offset + 0.5)
+            )
+        end
+
+        local offset = state.side * amount
 
         buffer.yaw_offset = utils.normalize(
             (buffer.yaw_offset or 0) + offset,
@@ -11411,11 +11003,82 @@ function M.start(deps)
     }
 
     local cs_logo = panorama.loadstring([[
-        var panel = null;
         var cs_logo = null;
-        var original_transform = null;
-        var original_visibility = null;
-        var PANEL_ID = "PastheticCustomLogoPanel";
+        var hidden_images = [];
+
+        var _IsValid = function(target) {
+            return target && (!target.IsValid || target.IsValid());
+        };
+
+        var _HideLogoImages = function(target) {
+            if (!_IsValid(target)) {
+                return;
+            }
+
+            var count = 0;
+            try {
+                count = target.GetChildCount ? target.GetChildCount() : 0;
+            } catch (e) {
+                return;
+            }
+
+            for (var i = 0; i < count; i++) {
+                var child = null;
+
+                try {
+                    child = target.GetChild(i);
+                } catch (e) {}
+
+                if (!_IsValid(child)) {
+                    continue;
+                }
+
+                if (child.paneltype === "Image") {
+                    hidden_images.push({
+                        panel: child,
+                        opacity: child.style.opacity || "1"
+                    });
+
+                    child.style.opacity = "0";
+                }
+
+                _HideLogoImages(child);
+            }
+        };
+
+        var _RestoreLogoImages = function() {
+            for (var i = 0; i < hidden_images.length; i++) {
+                var item = hidden_images[i];
+
+                if (_IsValid(item.panel)) {
+                    item.panel.style.opacity = item.opacity;
+                }
+            }
+
+            hidden_images = [];
+        };
+
+        var _ApplyHomeBackground = function(imageUrl) {
+            if (!_IsValid(cs_logo)) {
+                return;
+            }
+
+            cs_logo.style.backgroundImage = 'url("' + imageUrl + '")';
+            cs_logo.style.backgroundPosition = "center";
+            cs_logo.style.backgroundSize = "55px 55px";
+            cs_logo.style.backgroundRepeat = "no-repeat";
+        };
+
+        var _RestoreHomeBackground = function() {
+            if (!_IsValid(cs_logo)) {
+                return;
+            }
+
+            cs_logo.style.backgroundImage = "none";
+            cs_logo.style.backgroundPosition = "center";
+            cs_logo.style.backgroundSize = "auto";
+            cs_logo.style.backgroundRepeat = "no-repeat";
+        };
 
         var _Create = function(imageUrl) {
             cs_logo = $.GetContextPanel().FindChildTraverse("MainMenuNavBarHome");
@@ -11423,75 +11086,30 @@ function M.start(deps)
                 return;
             }
 
-            original_transform = cs_logo.style.transform || 'none';
-            original_visibility = cs_logo.style.visibility || 'visible';
-
-            cs_logo.style.visibility = 'collapse';
-            try { cs_logo.style.transform = 'translate3d(-9999px, -9999px, 0)'; } catch (e) {}
-
-            var parent = cs_logo.GetParent();
-            if (!parent) {
-                return;
-            }
-
-            var old = $.GetContextPanel().FindChildTraverse(PANEL_ID);
+            var old = $.GetContextPanel().FindChildTraverse("CustomPanel");
             if (old) {
                 old.DeleteAsync(0.0);
             }
 
-            old = $.GetContextPanel().FindChildTraverse("CustomPanel");
-            if (old) {
-                old.DeleteAsync(0.0);
-            }
-
-            panel = $.CreatePanel("Panel", parent, PANEL_ID);
-            if (!panel) {
-                return;
-            }
-
-            if (!panel.BLoadLayoutFromString(
-            `<root>
-                <Panel class="mainmenu-navbar__btn-small mainmenu-navbar__btn-home MainMenuModeOnly">
-                    <RadioButton id="main_menu"
-                        style="width: 100%; height: 100%; horizontal-align: center; vertical-align: center;"
-                        onactivate="MainMenu.OnHomeButtonPressed(); $.DispatchEvent( 'PlaySoundEffect', 'UIPanorama.mainmenu_press_home', 'MOUSE' );"
-                        oncancel="MainMenu.OnEscapeKeyPressed();"
-                        onmouseover="UiToolkitAPI.ShowTextTooltip('main_menu', 't.me/debugoverlay');"
-                        onmouseout="UiToolkitAPI.HideTextTooltip();">
-                        <Image textureheight="55" texturewidth="-1" src="${imageUrl}"
-                            style="horizontal-align: center; vertical-align: center;" />
-                    </RadioButton>
-                </Panel>
-            </root>`,
-        false, false)) {
-            panel.DeleteAsync(0);
-            panel = null;
-            return;
-            }
-
-            parent.MoveChildBefore(panel, parent.GetChild(0));
+            _RestoreLogoImages();
+            _RestoreHomeBackground();
+            _HideLogoImages(cs_logo);
+            _ApplyHomeBackground(imageUrl);
         };
 
         var _Destroy = function() {
-            var current = $.GetContextPanel().FindChildTraverse(PANEL_ID);
-            if (current && current !== panel) {
-                current.DeleteAsync(0.0);
-            }
-
-            if (panel) {
-                panel.DeleteAsync(0.0);
-                panel = null;
-            }
-
-            if (cs_logo) {
-                try { cs_logo.style.transform = original_transform; } catch (e) {}
-                cs_logo.style.visibility = original_visibility;
-            }
+            _RestoreLogoImages();
+            _RestoreHomeBackground();
         };
 
         var _Exists = function() {
-            var current = $.GetContextPanel().FindChildTraverse(PANEL_ID);
-            return current && current.IsValid();
+            for (var i = 0; i < hidden_images.length; i++) {
+                if (_IsValid(hidden_images[i].panel)) {
+                    return true;
+                }
+            }
+
+            return false;
         };
 
         return {
@@ -12191,6 +11809,170 @@ function M.start(deps)
         };
     ]], 'CSGOMainMenu')()
 
+    local factory_restore = panorama.loadstring([[
+        var _IsValid = function(panel) {
+            return panel && (!panel.IsValid || panel.IsValid());
+        };
+
+        var _Root = function() {
+            try {
+                return $.GetContextPanel();
+            } catch (e) {}
+
+            return null;
+        };
+
+        var _Find = function(id) {
+            var root = _Root();
+            if (!_IsValid(root)) {
+                return null;
+            }
+
+            try {
+                var panel = root.FindChildTraverse(id);
+                return _IsValid(panel) ? panel : null;
+            } catch (e) {}
+
+            return null;
+        };
+
+        var _Delete = function(id) {
+            var panel = _Find(id);
+            if (_IsValid(panel)) {
+                try { panel.DeleteAsync(0.0); } catch (e) {}
+            }
+        };
+
+        var _Show = function(id) {
+            var panel = _Find(id);
+            if (!_IsValid(panel)) {
+                return;
+            }
+
+            try { panel.visible = true; } catch (e) {}
+            panel.style.visibility = "visible";
+            panel.style.opacity = "1";
+            try { panel.style.transform = "none"; } catch (e) {}
+            try { panel.hittest = true; } catch (e) {}
+            try { panel.hittestchildren = true; } catch (e) {}
+        };
+
+        var _RestoreImages = function(panel) {
+            if (!_IsValid(panel)) {
+                return;
+            }
+
+            var count = 0;
+            try {
+                count = panel.GetChildCount ? panel.GetChildCount() : 0;
+            } catch (e) {
+                return;
+            }
+
+            for (var i = 0; i < count; i++) {
+                var child = null;
+
+                try {
+                    child = panel.GetChild(i);
+                } catch (e) {}
+
+                if (!_IsValid(child)) {
+                    continue;
+                }
+
+                if (child.paneltype === "Image") {
+                    child.style.opacity = "1";
+                }
+
+                _RestoreImages(child);
+            }
+        };
+
+        var _RestoreHome = function() {
+            var home = _Find("MainMenuNavBarHome");
+            if (!_IsValid(home)) {
+                return;
+            }
+
+            home.style.backgroundImage = "none";
+            home.style.backgroundPosition = "center";
+            home.style.backgroundSize = "auto";
+            home.style.backgroundRepeat = "no-repeat";
+            try { home.visible = true; } catch (e) {}
+            home.style.visibility = "visible";
+            home.style.opacity = "1";
+            try { home.style.transform = "none"; } catch (e) {}
+            try { home.hittest = true; } catch (e) {}
+            try { home.hittestchildren = true; } catch (e) {}
+            _RestoreImages(home);
+        };
+
+        var _RestoreBackground = function() {
+            var movieElements = [
+                "MainMenuMovie",
+                "MainMenuMovieParent",
+                "MoviePlayer"
+            ];
+
+            for (var i = 0; i < movieElements.length; i++) {
+                _Show(movieElements[i]);
+            }
+
+            var bgElements = [
+                "MainMenuBackground",
+                "MainMenu",
+                "MainMenuContainerPanel"
+            ];
+
+            for (var j = 0; j < bgElements.length; j++) {
+                var panel = _Find(bgElements[j]);
+                if (_IsValid(panel)) {
+                    panel.style.backgroundImage = "none";
+                    panel.style.opacity = "1";
+                }
+            }
+        };
+
+        var _Restore = function() {
+            var deleteIds = [
+                "PastheticCustomLogoPanel",
+                "CustomPanel",
+                "news_panel",
+                "custom_stats_button",
+                "custom_watch_button",
+                "custom_sidebar_panel",
+                "custom_model_panel",
+                "PastheticBackgroundLayer",
+                "PastheticSimpleServerBrowser"
+            ];
+
+            for (var i = 0; i < deleteIds.length; i++) {
+                _Delete(deleteIds[i]);
+            }
+
+            var showIds = [
+                "MainMenuNavBarHome",
+                "JsNewsContainer",
+                "MainMenuNavBarStats",
+                "MainMenuNavBarWatch",
+                "JsMainMenuSidebar",
+                "NotificationsContainer",
+                "MainMenuVanityParent"
+            ];
+
+            for (var j = 0; j < showIds.length; j++) {
+                _Show(showIds[j]);
+            }
+
+            _RestoreHome();
+            _RestoreBackground();
+        };
+
+        return {
+            restore: _Restore
+        };
+    ]], 'CSGOMainMenu')()
+
     local api = {}
     local unload
 
@@ -12352,6 +12134,7 @@ function M.start(deps)
         call_method(remove_sidebar, 'show')
         call_method(remove_vac_panel, 'show')
         call_method(remove_model, 'show')
+        call_method(factory_restore, 'restore')
 
         if rawget(_G, MODULE_UNLOAD_KEY) == unload then
             _G[MODULE_UNLOAD_KEY] = nil
@@ -17121,46 +16904,10 @@ local resource do
                 features.avoid_backstab = avoid_backstab
             end
 
-            local backtrack_disruptor = { } do
-                backtrack_disruptor.enabled = config_system.push(
-                    'Features', 'backtrack_disruptor.enabled', menu.new(
-                        ui.new_checkbox, 'AA', 'Anti-aimbot angles', 'Backtrack disruptor'
-                    )
-                )
-
-                backtrack_disruptor.mode = config_system.push(
-                    'Features', 'backtrack_disruptor.mode', menu.new(
-                        ui.new_multiselect, 'AA', 'Anti-aimbot angles', new_key('Break when', 'backtrack_disruptor'), {
-                            'Standing',
-                            'Moving',
-                            'Slow Walk',
-                            'Air',
-                            'Air-Crouch',
-                            'Crouch',
-                            'Move-Crouch'
-                        }
-                    )
-                )
-
-                backtrack_disruptor.delay_min = config_system.push(
-                    'Features', 'backtrack_disruptor.delay_min', menu.new(
-                        ui.new_slider, 'AA', 'Anti-aimbot angles', new_key('Min delay', 'backtrack_disruptor'), 2, 64, 8, true, 't'
-                    )
-                )
-
-                backtrack_disruptor.delay_max = config_system.push(
-                    'Features', 'backtrack_disruptor.delay_max', menu.new(
-                        ui.new_slider, 'AA', 'Anti-aimbot angles', new_key('Max delay', 'backtrack_disruptor'), 2, 64, 24, true, 't'
-                    )
-                )
-
-                features.backtrack_disruptor = backtrack_disruptor
-            end
-
             local record_disruptor = { } do
-                record_disruptor.enabled = config_system.push(
-                    'Features', 'record_disruptor.enabled', menu.new(
-                        ui.new_checkbox, 'AA', 'Anti-aimbot angles', 'Record disruptor'
+                record_disruptor.range = config_system.push(
+                    'Features', 'record_disruptor.range', menu.new(
+                        ui.new_slider, 'AA', 'Anti-aimbot angles', 'Record disruptor', 0, 100, 0, true, '%'
                     )
                 )
 
@@ -18494,20 +18241,9 @@ local resource do
                     ::continue::
                 end
 
-                local is_backtrack_disruptor = ref.backtrack_disruptor.enabled:get() do
-                    menu_logic.set(ref.backtrack_disruptor.enabled, true)
-                end
-
-                local is_record_disruptor = ref.record_disruptor.enabled:get() do
-                    menu_logic.set(ref.record_disruptor.enabled, true)
-
-                    if not is_record_disruptor then
-                        goto continue
-                    end
-
+                do
+                    menu_logic.set(ref.record_disruptor.range, true)
                     menu_logic.set(ref.record_disruptor.separator, true)
-
-                    ::continue::
                 end
 
                 local is_safe_head = ref.safe_head.enabled:get() do
@@ -18890,7 +18626,6 @@ function M.start(ctx)
     local pasthetic_anim_breaker = require_pasthetic_module 'pasthetic/anim_breaker'
     local pasthetic_logging_system = require_pasthetic_module 'pasthetic/logging_system'
     local pasthetic_antiaim = require_pasthetic_module 'pasthetic/antiaim'
-    local pasthetic_antiaim_backtrack_poison = require_pasthetic_module 'pasthetic/antiaim_backtrack_poison'
     local pasthetic_antiaim_predicted_at_targets = require_pasthetic_module 'pasthetic/antiaim_predicted_at_targets'
     local pasthetic_antiaim_record_disruptor = require_pasthetic_module 'pasthetic/antiaim_record_disruptor'
     local pasthetic_antiaim_presets = require_pasthetic_module 'pasthetic/antiaim_presets'
@@ -19222,21 +18957,6 @@ function M.start(ctx)
         })
         end)
     end
-
-    diagnostics:start('antiaim_backtrack_poison', function()
-        return pasthetic_antiaim_backtrack_poison.start({
-            client = client,
-            entity = entity,
-            globals = globals,
-            utils = utils,
-            software = software,
-            exploit = exploit,
-            resource = resource,
-            renderer = renderer,
-            bit = bit
-        })
-    end)
-    diagnostics:health('antiaim_backtrack_poison', pasthetic_antiaim_backtrack_poison)
 
     diagnostics:start('antiaim', function()
         return pasthetic_antiaim.start({
