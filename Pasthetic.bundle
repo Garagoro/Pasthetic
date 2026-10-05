@@ -3,7 +3,7 @@
 local __pasthetic_allinone = true
 local __pasthetic_bundle = true
 local __pasthetic_disable_allinone_update = true
-local __pasthetic_allinone_version = "2026.05.18-2"
+local __pasthetic_allinone_version = "2026.10.05-1"
 local __pasthetic_allinone_target_path = ".\\Pasthetic.bundle"
 local PASTHETIC_GIT_URL = 'https://github.com/Garagoro/Pasthetic'
 local function log_loader_reinstall_hint()
@@ -22715,12 +22715,25 @@ end
 
 local function vm_editor_should_block_input()
     local editor = we_vars.viewmodel_editor
-    return editor.block_input_until ~= nil
-        and globals_tickcount() <= editor.block_input_until
+    local until_tick = editor.block_input_until
+    if until_tick == nil then
+        return false
+    end
+
+    -- tickcount resets on map change; a deadline far in the future is stale
+    local tick = globals_tickcount()
+    if until_tick - tick > 2 then
+        editor.block_input_until = nil
+        return false
+    end
+
+    return tick <= until_tick
 end
 
 local function vm_editor_suspend(ticks)
     local editor = we_vars.viewmodel_editor
+    editor.block_input_until = nil
+    editor.wheel_next_tick = 0
     editor.suspend_until = globals_tickcount() + (ticks or 64)
     editor.dragging = false
     editor.last_x = nil

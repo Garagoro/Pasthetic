@@ -1040,12 +1040,25 @@ end
 
 local function vm_editor_should_block_input()
     local editor = we_vars.viewmodel_editor
-    return editor.block_input_until ~= nil
-        and globals_tickcount() <= editor.block_input_until
+    local until_tick = editor.block_input_until
+    if until_tick == nil then
+        return false
+    end
+
+    -- tickcount resets on map change; a deadline far in the future is stale
+    local tick = globals_tickcount()
+    if until_tick - tick > 2 then
+        editor.block_input_until = nil
+        return false
+    end
+
+    return tick <= until_tick
 end
 
 local function vm_editor_suspend(ticks)
     local editor = we_vars.viewmodel_editor
+    editor.block_input_until = nil
+    editor.wheel_next_tick = 0
     editor.suspend_until = globals_tickcount() + (ticks or 64)
     editor.dragging = false
     editor.last_x = nil
