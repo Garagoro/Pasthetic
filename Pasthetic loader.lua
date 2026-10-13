@@ -18,6 +18,14 @@ local state = {
     loaded = false
 }
 local request_serial = 0
+local buttons = {}
+
+-- The loader buttons are only shown while a choice is needed
+local function set_buttons_visible(visible)
+    for i = 1, #buttons do
+        ui.set_visible(buttons[i], visible)
+    end
+end
 
 local function log(r, g, b, msg)
     if client ~= nil and client.color_log ~= nil then
@@ -252,6 +260,7 @@ local function run_bundle(source, label)
 
     if chunk == nil then
         err('bundle syntax error: ' .. tostring(load_error))
+        set_buttons_visible(true)
         return false
     end
 
@@ -264,10 +273,12 @@ local function run_bundle(source, label)
     _G.__pasthetic_public_loader = nil
 
     if not ok_run then
+        set_buttons_visible(true)
         error(runtime_error)
     end
 
     state.loaded = true
+    set_buttons_visible(false)
     return true
 end
 
@@ -430,6 +441,7 @@ local function load_newest()
 end
 
 local function offer_choice(reason)
+    set_buttons_visible(true)
     log(255, 255, 255, reason .. ' — use Newest or Local cache')
 end
 
@@ -472,7 +484,9 @@ local function auto_start()
     end)
 end
 
-ui.new_button('CONFIG', 'Lua', 'Pasthetic: Newest', load_newest)
-ui.new_button('CONFIG', 'Lua', 'Pasthetic: Local cache', load_cached)
+buttons[#buttons + 1] = ui.new_button('CONFIG', 'Lua', 'Pasthetic: Newest', load_newest)
+buttons[#buttons + 1] = ui.new_button('CONFIG', 'Lua', 'Pasthetic: Local cache', load_cached)
 
+-- Hidden until the startup check decides a choice is needed
+set_buttons_visible(false)
 auto_start()
