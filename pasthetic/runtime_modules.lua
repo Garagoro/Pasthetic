@@ -29,6 +29,7 @@ function M.start(ctx)
     local pasthetic_antiaim_record_disruptor = require_pasthetic_module 'pasthetic/antiaim_record_disruptor'
     local pasthetic_antiaim_presets = require_pasthetic_module 'pasthetic/antiaim_presets'
     local pasthetic_item_crash_fix = require_pasthetic_module 'pasthetic/item_crash_fix'
+    local pasthetic_gc_unlock = require_pasthetic_module 'pasthetic/gc_unlock'
     local pasthetic_world_enhancer = require_pasthetic_module 'pasthetic/world_enhancer'
     local pasthetic_world_ragdolls = require_pasthetic_module 'pasthetic/world_ragdolls'
     local pasthetic_world_local_glow = require_pasthetic_module 'pasthetic/world_local_glow'
@@ -400,6 +401,17 @@ function M.start(ctx)
     local item_crash_fix = diagnostics:start('item_crash_fix', function()
         return pasthetic_item_crash_fix.start({
             ffi = ffi,
+            client = client
+        })
+    end)
+
+    -- ============================================
+    -- GC UNLOCK (always enabled): inventory on csgo_legacy
+    -- ============================================
+    diagnostics:start('gc_unlock', function()
+        return pasthetic_gc_unlock.start({
+            ffi = ffi,
+            bit = bit,
             client = client
         })
     end)
