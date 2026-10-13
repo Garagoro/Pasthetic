@@ -45,6 +45,12 @@ function M.start(deps)
 
     local uintptr_t = ffi.typeof('uintptr_t')
 
+    -- Same look as the other Pasthetic logs: purple tag, white message
+    local function log(message)
+        client.color_log(180, 100, 255, '[Pasthetic] \0')
+        client.color_log(255, 255, 255, message)
+    end
+
     local function read_u32(address)
         return tonumber(ffi.cast('uint32_t*', address)[0]) or 0
     end
@@ -96,7 +102,7 @@ function M.start(deps)
 
     -- Wrong build: the offsets would point at garbage, so stay inert
     if read_u32(gc_system) ~= client_base + RVA_GC_CLIENT_SYSTEM_VTABLE then
-        client.log('[Pasthetic] GC unlock skipped: unknown client.dll build')
+        log('GC unlock skipped: unknown client.dll build')
         return state
     end
 
@@ -154,7 +160,7 @@ function M.start(deps)
     end
 
     apply()
-    client.log(string.format('[Pasthetic] GC unlock: ClientVersion %d -> %d', original.gc, target_version))
+    log(string.format('GC unlock: ClientVersion %d -> %d', original.gc, target_version))
 
     client.set_event_callback('paint_ui', apply)
 
