@@ -236,6 +236,11 @@ local function verify_bundle(body, artifact)
 end
 
 local function run_bundle(source, label)
+    if state.loaded then
+        err('already loaded; reload scripts to switch the bundle')
+        return false
+    end
+
     local loader = loadstring or load
 
     if type(loader) ~= 'function' then
@@ -424,7 +429,50 @@ local function load_newest()
     end)
 end
 
+local function offer_choice(reason)
+    log(255, 255, 255, reason .. ' — use Newest or Local cache')
+end
+
+-- On startup compare the local cache with the newest GitHub manifest: run the
+-- cache right away when it is that exact bundle, otherwise leave the choice.
+local function auto_start()
+    if readfile == nil then
+        offer_choice('readfile unavailable')
+        return
+    end
+
+    local ok_read, cached = pcall(readfile, CACHE_PATH)
+
+    if not ok_read or type(cached) ~= 'string' or cached == '' then
+        offer_choice('no local cache')
+        return
+    end
+
+    state.busy = true
+    log(255, 255, 255, 'checking cache against GitHub...')
+
+    fetch_best_manifest(function(manifest, body, url, error_text)
+        state.busy = false
+
+        local artifact = get_bundle_artifact(manifest)
+
+        if artifact == nil then
+            err('manifest download failed: ' .. tostring(error_text or 'invalid manifest'))
+            offer_choice('could not check GitHub')
+            return
+        end
+
+        if not verify_bundle(cached, artifact) then
+            offer_choice('cache differs from GitHub ' .. tostring(artifact.version or 'unknown'))
+            return
+        end
+
+        ok('cache matches GitHub ' .. tostring(artifact.version or 'unknown'))
+        load_cached()
+    end)
+end
+
 ui.new_button('CONFIG', 'Lua', 'Pasthetic: Newest', load_newest)
 ui.new_button('CONFIG', 'Lua', 'Pasthetic: Local cache', load_cached)
 
-log(255, 255, 255, 'loader ready — use Newest or Local cache')
+auto_start()
